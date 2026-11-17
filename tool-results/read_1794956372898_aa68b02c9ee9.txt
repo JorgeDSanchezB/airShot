@@ -1,0 +1,402 @@
+     1→# AirShot — Documento de Arquitectura y Planificación
+     2→
+     3→| Campo | Valor |
+     4→|---|---|
+     5→| Proyecto | AirShot — generador de video asistido por IA (local, single-user) |
+     6→| Versión del documento | 1.0 |
+     7→| Tipo de entregable | Especificación vinculante de arquitectura y planificación (documento Markdown) |
+     8→| Alcance de este documento | Fases 1–5 completamente desarrolladas; Fase 6 preparada como esqueleto (sin código de implementación, según lo solicitado) |
+     9→| Registro de decisiones | `docs/decisions/` (ADR-001 … ADR-015, con índice en `docs/decisions/README.md`) |
+    10→| Registro de trabajo | `agents.md` (raíz del repositorio, actualizado al final de cada fase) |
+    11→
+    12→**Declaración de honestidad epistémica (vinculante).** Este documento es un artefacto de planificación. En esta fase **no existe código de AirShot, no se ejecutaron tests, no se desplegó nada y no se validó ninguna API externa**. Toda verificación realizada fue **estática** (revisión documental adversarial por agentes independientes). Cuando una afirmación depende de comportamiento externo (por ejemplo, las duraciones exactas soportadas por Veo o Kling, o los endpoints exactos de VoiceStudio), se marca como **supuesto a verificar en implementación** con el método de verificación indicado. Ningún resultado de ejecución es afirmado. Véase la sección «Estado de verificación» al final.
+    13→
+    14→**Convenciones.** Prosa en castellano. Identificadores técnicos, nombres de campos de API, prompts y artefactos de configuración en inglés. `TBD` y `TODO` están prohibidos en este documento; cualquier incertidumbre se registra como supuesto numerado (A-xx) o riesgo numerado (R-xx).
+    15→
+    16→---
+    17→
+    18→## 0. Mapa de trazabilidad: requisito → fase → módulo → endpoint → decisión
+    19→
+    20→Este mapa es la prueba de cobertura del LISTÓN (punto 1). Cada requisito funcional del enunciado queda localizado en fases, módulos backend, componentes frontend, endpoints y ADRs.
+    21→
+    22→| # | Requisito funcional | Fase | Módulo backend | Componente frontend | Endpoint(s) principal(es) | ADR |
+    23→|---|---|---|---|---|---|---|
+    24→| 1 | Ingesta de historia (pegar historia del usuario) | F1 §1.2 UC-01, F3 §3.2 | `ProjectsController`, `CreateProjectUseCase`, `ProjectRepository` | `ProjectsPage` + `ProjectForm` | `POST /api/v1/projects` | ADR-001 |
+    25→| 2 | Mejora de la historia con LLM | F1 §1.2 UC-02, F3 §3.2 | `StoryboardService` + puerto `LLMProvider` | `StoryboardList` | `POST /api/v1/projects/{id}/storyboard` | ADR-010, ADR-014 |
+    26→| 3 | Storyboard: división en escenas de 4–15 s, default 6 s | F2 §2.3 (entidad `Scene`), F3 §3.2 | Entidad `Scene`, límites de `config.yaml` (`scene.*`), `DurationMapper` | `StoryboardList`, `DurationSlider` | `PATCH /api/v1/scenes/{id}`, `GET /api/v1/config` | ADR-009 |
+    27→| 4 | Biblioteca de referencias con niveles (basic/advanced/cinematic) y ámbito (global/proyecto) | F2 §2.3, F4 completo | `ReferenceRepository`, `ReferenceValidator`, `ReferenceFactory` | `ReferenceLibrary`, `ReferenceForm`, `ReferenceCard` | `/api/v1/references` (CRUD + imágenes) | ADR-003 |
+    28→| 5 | Prompts visuales en inglés por escena | F1 §1.3 (supuesto A-03), F3 §3.2 | `PromptComposer` (dominio) | `PromptEditor` | `PATCH /api/v1/scenes/{id}` | ADR-015 |
+    29→| 6 | Imágenes base por escena: generadas con IA o subidas | F3 §3.2 | Puertos `ImageProvider` + `StorageService`, validación de subidas | `AssetPreview` (+ `SceneCard`) | `POST /api/v1/scenes/{id}/generate-image`, `POST /api/v1/scenes/{id}/image` | ADR-010, ADR-002 |
+    30→| 7 | Proveedores de video intercambiables (Veo, Kling, Runway, Luma…) | F1 §1.5, F2 §2.6, F3 §3.2, F4 §4.8 | Puerto `VideoProvider` + `VideoProviderFactory` + registro `providers.yaml` | `ProviderSettingsForm`, `GenerateVideoDialog` | `POST /api/v1/scenes/{id}/generate-video`, `/api/v1/provider-configs` | ADR-002, ADR-007 |
+    31→| 8 | TTS con VoiceStudio (local, default) o ElevenLabs | F3 §3.2 | Puerto `TTSProvider` + `TTSProviderFactory` | `AudioPanel`, `VoicePicker` | `POST /api/v1/scenes/{id}/generate-audio`, `GET /api/v1/tts/voices` | ADR-007, ADR-010 |
+    32→| 9 | Ensamblaje final (clips + audio en video final) | F3 §3.2 | `AssemblyService` (FFmpeg, encapsulado) | `AssemblyPanel` | `POST /api/v1/projects/{id}/assemble`, `GET /api/v1/assemblies/{jobId}` | ADR-011, ADR-014 |
+    33→| 10 | Música opcional en el ensamblaje | F3 §3.2 | `AssemblyService` (mezcla con volumen/fade configurable) | `MusicPicker` | `POST /api/v1/projects/{id}/music`, `POST /api/v1/projects/{id}/assemble` | ADR-011 |
+    34→| 11 | Earshot como módulo opcional de QA de audio (desactivado por defecto) | F1 §1.5, F3 §3.2 | Puerto `AudioQAProvider`, adaptador `earshot` | `AudioQAPanel` (opt-in explícito) | `POST /api/v1/projects/{id}/audio-qa` | ADR-013 |
+    35→| 12 | Estilos visuales reutilizables (biblioteca + custom) | F2 §2.3, F3 §3.2 | `VisualStyleRepository` + seed idempotente | `StylePicker` | `/api/v1/visual-styles` (CRUD) | ADR-001 |
+    36→
+    37→Requisitos transversales del LISTÓN (paginación por cursor, virtualización, taxonomía de 7 tipos de error, cero hardcoding, extensibilidad sin tocar el núcleo) están asignados así: paginación → F3 §3.1 (todas las colecciones); virtualización y claves estables → F5 §5.3–5.4; taxonomía de errores → F3 §3.1 (tabla canónica) aplicada en F2 §2.3–2.4, F4 §4.6 y F5 §5.4; cero hardcoding → Anexo A (`config.yaml` completo) y §1.9; extensibilidad de proveedores → F4 §4.8 y ADR-007; extensibilidad de atributos → F4 §4.2–4.5 y ADR-003.
+    38→
+    39→---
+    40→
+    41→## FASE 1 — Plan Estratégico (Frontend & Backend)
+    42→
+    43→### 1.1 Objetivo y alcance
+    44→
+    45→AirShot es una aplicación web **local y de usuario único** que convierte una historia escrita por el usuario en un video ensamblado. Cadena de valor:
+    46→
+    47→```
+    48→historia (es) → mejora LLM → storyboard (escenas ~6 s, 4–15 s)
+    49→            → prompts visuales (en) + referencias (personajes/escenarios, niveles)
+    50→            → imágenes base (IA o subida) → clips de video (proveedor intercambiable)
+    51→            → narración TTS (VoiceStudio | ElevenLabs) [+ QA de audio opcional Earshot]
+    52→            → ensamblaje FFmpeg (+ música opcional) → video final
+    53→```
+    54→
+    55→Alcance de la versión 1:
+    56→
+    57→- Incluido: todo el flujo anterior, biblioteca de referencias global/de proyecto con niveles, estilos visuales, configuración cifrada de proveedores, ensamblaje con música opcional, módulo opcional Earshot (desactivado por defecto).
+    58→- Excluido (y documentado para no ambigüedad): subtítulos, multiusuario real, autenticación real, generación de guiones desde cero (la historia la escribe el usuario), exportación a plataformas externas, cola de trabajos distribuida, facturación.
+    59→
+    60→**Preparación para multi-tenant sin reescribir el núcleo** (requisito del enunciado): ver §1.10. La decisión es no implementar auth ahora, pero dejar `Depends(get_current_user)` como contrato único de identidad y repositorios que reciben el contexto de usuario, de modo que añadir JWT/OAuth + `tenant_id` sea aditivo (columna + filtro en repos), no estructural.
+    61→
+    62→### 1.2 Actores y casos de uso
+    63→
+    64→Actores:
+    65→
+    66→1. **Usuario básico** — pega su historia y ejecuta el flujo automático hasta el video final; interviene solo para revisar y confirmar.
+    67→2. **Usuario avanzado** — edita storyboard (texto, prompt, duración 4–15 s), elige nivel de referencias, elige proveedor de video y TTS, activa Earshot, sube música, ajusta parámetros de ensamblaje.
+    68→3. **Bibliotecario de referencias** (rol del mismo usuario) — crea personajes/escenarios con IA o subiéndolos, decide ámbito global o de proyecto, gestiona imágenes de referencia.
+    69→
+    70→Casos de uso (el manejo de errores de cada UC sigue la taxonomía canónica de F3 §3.1; aquí solo se listan los flujos principales y alternos clave):
+    71→
+    72→| UC | Nombre | Actor | Flujo principal | Flujo alterno relevante |
+    73→|---|---|---|---|---|
+    74→| UC-01 | Crear proyecto con historia | básico | `POST /projects` → proyecto `draft` con `originalStory` | título vacío/largo → 422 `VALIDATION_ERROR` |
+    75→| UC-02 | Generar storyboard | básico | `POST /projects/{id}/storyboard` → LLM mejora historia + divide en escenas (default 6 s) + `promptEn` por escena | LLM produce JSON inválido → reintentos → 502 `LLM_INVALID_OUTPUT` |
+    76→| UC-03 | Editar escena | avanzado | `PATCH /scenes/{id}` (texto, prompt, duración, fuente de narración) | duración fuera de rango → 422 (rango leído de `GET /config`, no fijo en frontend) |
+    77→| UC-04 | Gestionar referencias | bibliotecario | CRUD `/references` + imágenes (subida o IA) + nivel + ámbito | atributo no permitido/sensible → 422 (`SENSITIVE_KEY` / `ATTRIBUTE_LIMIT`) |
+    78→| UC-05 | Asignar referencias a escena | avanzado | `PUT /scenes/{id}/references` (subject/environment) | excede tope por escena → 422 (tope desde `config.yaml`) |
+    79→| UC-06 | Imagen base por escena | básico/avanzado | generar con IA o subir → `imageBasePath` + `status=image_ready` | subida > tamaño/mimetype → 413/415 |
+    80→| UC-07 | Generar clip de video | básico | `POST /scenes/{id}/generate-video` → 202 async → sondeo de escena | proveedor no configurado → 409 `PROVIDER_NOT_CONFIGURED`; timeout → 504 `PROVIDER_TIMEOUT` |
+    81→| UC-08 | Generar narración | básico | `POST /scenes/{id}/generate-audio` (VoiceStudio default) | VoiceStudio caído → 503 `PROVIDER_UNAVAILABLE` con indicación de cambiar a ElevenLabs |
+    82→| UC-09 | Ensamblar proyecto | básico | `POST /projects/{id}/assemble` → 202 job → `final.mp4` | escenas incompletas → 409 `ASSEMBLY_INCOMPLETE_SCENES` |
+    83→| UC-10 | Configurar proveedores | avanzado | `/provider-configs` (API key cifrada) + `POST /{id}/test` | key inválida → 502 `PROVIDER_AUTH` con remediación |
+    84→| UC-11 | QA de audio opcional | avanzado | `POST /projects/{id}/audio-qa` (Earshot opt-in) | Earshot no disponible → 503 con diagnóstico |
+    85→| UC-12 | Música opcional | avanzado | subir pista + volumen en assemble | formato no permitido → 415 |
+    86→| UC-13 | Biblioteca de estilos | avanzado | CRUD `/visual-styles`; estilos seed no eliminables | borrar seed → 409 `DELETION_FORBIDDEN` |
+    87→| UC-14 | Flujo automático completo | básico | orquestación cliente de UC-02 → UC-06/07/08 por escena → UC-09 | pausa/reanuda por escena; sin ejecución silenciosa en segundo plano |
+    88→
+    89→### 1.3 Supuestos (documentados; cada uno indica cómo invalidarlo o verificarlo)
+    90→
+    91→| ID | Supuesto | Motivo | Cómo verificar / invalidar |
+    92→|---|---|---|---|
+    93→| A-01 | El usuario aporta sus propias API keys (Veo, Kling, ElevenLabs, LLM, image-gen); AirShot no cobra nada | Enunciado: «El usuario tiene sus propias API keys» | No aplicable (definición de producto) |
+    94→| A-02 | Las APIs de video aceptan image-to-video con duración variable; las duraciones soportadas difieren por proveedor | Enunciado; documentación pública de Veo/Kling | Verificación en implementación: `POST /provider-configs/{id}/test` consulta capabilities y persiste lo observado en `ProviderConfig.lastCheck` advirtiendo divergencias con el registro; `providers.yaml` es versionado y se actualiza solo manualmente (los valores del Anexo B son defaults verificables) |
+    95→| A-03 | Los prompts visuales se generan en inglés (mejor rendimiento de modelos); la historia mejorada y la UI están en español | Enunciado + práctica común de modelos de imagen/video | Comparativa cualitativa en implementación; no se afirma nada cuantitativo ahora |
+    96→| A-04 | Veo expone API vía Gemini/Vertex con duraciones discretas {4, 6, 8} s; Kling {5, 10} s | Enunciado («Veo: 4/6/8 s; Kling: 5/10 s») | Contraste con documentación oficial del proveedor en implementación; el `DurationMapper` hace el ajuste, por lo que un dato erróneo no rompe el núcleo |
+    97→| A-05 | VoiceStudio local escucha en `http://localhost:3900/v1` con API compatible OpenAI (endpoint de síntesis tipo `/audio/speech` y listado de voces) | Enunciado | Sondeo `GET /api/v1/health?deep=true` en implementación; el puerto `TTSProvider` aísla cualquier desviación |
+    98→| A-06 | Earshot (github.com/Leonxlnx/earshot) se integra como módulo Python local invocable desde el backend; su contrato interno se estabiliza en implementación | Enunciado | Revisión del repositorio en implementación; el puerto `AudioQAProvider` aísla la integración |
+    99→| A-07 | Usuario único, sin autenticación real; existe un «usuario local» por defecto | Enunciado | Producto definido |
+   100→| A-08 | La narración de una escena usa por defecto `improvedText` (`narrationSource=improved`), alternativas `original`/`custom` | Decisión de diseño (texto mejorado ya está sincronizado con el storyboard) | Configurable por escena; cambio sin migración |
+   101→| A-09 | Sin subtítulos en v1 | Enunciado | Producto definido |
+   102→| A-10 | El LLM puede devolver JSON estructurado (response_format json_schema) o se fuerza con validación + reintentos | Comportamiento estándar de LLMs actuales | Pruebas de contrato con fixtures grabadas en implementación |
+   103→| A-11 | SQLite es suficiente para el volumen local (decenas de proyectos, miles de escenas) | Single-user local | Límites declarados en §3.1; migración a PostgreSQL prevista sin tocar dominio (ADR-001) |
+   104→| A-12 | FFmpeg/ffprobe están disponibles en el entorno de ejecución (instalados por la imagen Docker o el Makefile) | Enunciado (ensamblaje FFmpeg) | `GET /api/v1/health` comprueba versión de ffmpeg en implementación |
+   105→
+   106→### 1.4 Riesgos y mitigaciones
+   107→
+   108→| ID | Riesgo | Impacto | Mitigación diseñada |
+   109→|---|---|---|---|
+   110→| R-01 | Costo variable de APIs externas (lo asume el usuario) | financiero | Antes de cada generación por lote, la UI muestra resumen (n.º escenas × duración efectiva por proveedor). No hay cobro desde AirShot |
+   111→| R-02 | Duraciones soportadas distintas por proveedor | funcional | `DurationMapper` por proveedor (ADR-009) con redondeo documentado y advertencia en UI cuando la duración efectiva ≠ solicitada |
+   112→| R-03 | Límite de imágenes de referencia por proveedor (Veo hasta 3; otros varían) | funcional | `reference_image_limit` por proveedor en `providers.yaml` + política por nivel (§2.6) + selección de imágenes primarias en el payload |
+   113→| R-04 | Términos de servicio / licencias de contenido de proveedores | legal | Documentado: la responsabilidad del contenido y del uso de las APIs es del usuario; AirShot no distribuye contenido. No se da asesoría legal |
+   114→| R-05 | VoiceStudio no disponible (local caído) | disponibilidad | Health check profundo + error 503 con remediación explícita («cambia a ElevenLabs o levanta VoiceStudio»); nunca fallback silencioso |
+   115→| R-06 | FFmpeg ausente o de versión distinta | bloqueo ensamblaje | Health check + instalación declarada en Docker/Makefile; `AssemblyService` encapsula para sustituir por alternativa (ADR-011) |
+   116→| R-07 | LLM devuelve JSON malformado o escenas fuera de límites | flujo | Validación Pydantic del output + `llm.max_retries` + 502 `LLM_INVALID_OUTPUT` con detalle |
+   117→| R-08 | Historias muy largas → storyboards enormes | memoria/tiempo | `scene.max_scenes_per_project` configurable; división por lotes en `StoryboardService`; paginación por cursor en listas |
+   118→| R-09 | Pérdida de API keys | seguridad | Cifrado Fernet en reposo (ADR-012), enmascarado en respuestas, nunca en logs |
+   119→| R-10 | Deprecación/cambio de API de un proveedor | mantenimiento | Aislamiento en adaptadores (ADR-002/007); el resto del sistema no conoce endpoints |
+   120→| R-11 | Earshot no disponible o con contrato inestable | QA de audio (módulo opcional) bloqueado | Health check profundo + 503 `PROVIDER_UNAVAILABLE` con remediación; el pipeline principal no depende de Earshot (ADR-013) |
+   121→
+   122→### 1.5 Arquitectura general
+   123→
+   124→Modelo: **arquitectura en capas simplificada con puertos y adaptadores solo donde hay variabilidad real** (ADR-002). No microservicios, no CQRS, no event sourcing, no GraphQL (todas descartadas en §1.9 con motivo).
+   125→
+   126→```
+   127→┌──────────────────────────────────────────────────────────────────────────────┐
+   128→│ PRESENTACIÓN                                                                  │
+   129→│  Backend: FastAPI routers (presentation/api)   Frontend: React+Vite SPA       │
+   130→└───────────────┬──────────────────────────────────────┬───────────────────────┘
+   131→                │ use cases (application)               │ TanStack Query + Zustand
+   132→┌───────────────▼──────────────────────────────────────────────────────────────┐
+   133→│ APLICACIÓN — casos de uso orquestando dominio e infraestructura                │
+   134→│  CreateProject, GenerateStoryboard, GenerateSceneImage, GenerateSceneVideo,    │
+   135→│  GenerateSceneAudio, AssembleProject, RunAudioQA, CRUD de referencias/estilos │
+   136→└───────────────┬──────────────────────────────────────────────────────────────┘
+   137→                │
+   138→┌───────────────▼──────────────────────────────────────────────────────────────┐
+   139→│ DOMINIO — entidades (Project, Scene, Reference, VisualStyle, ProviderConfig,  │
+   140→│  AssemblyJob, SceneReference), servicios puros (PromptComposer,               │
+   141→│  DurationMapper, ReferenceValidator), puertos (interfaces) y enums            │
+   142→└───────┬──────────────────────────┬─────────────────────────┬─────────────────┘
+   143→        │                          │                         │
+   144→┌───────▼────────┐        ┌────────▼─────────────┐   ┌──────▼──────────────────┐
+   145→│ PERSISTENCIA   │        │ PROVEEDORES EXTERNOS  │   │ MEDIOS DE EJECUCIÓN      │
+   146→│ SQLAlchemy 2.0 │        │ ports → adapters:     │   │ StorageService (FS local │
+   147→│ async + repos  │        │ Video(TTS/LLM/Image/  │   │ ./data), AssemblyService │
+   148→│ (SQLite→PG)    │        │ AudioQA) providers    │   │ (FFmpeg subprocess)      │
+   149→└────────────────┘        └───────────────────────┘   └─────────────────────────┘
+   150→```
+   151→
+   152→**Por qué este modelo y no otro** (problema → coste → alternativa descartada):
+   153→
+   154→- Problema que resuelve: (a) los proveedores externos son intercambiables por requisito (Veo/Kling/Runway/Luma; VoiceStudio/ElevenLabs; LLM; image-gen; Earshot); (b) SQLite→PostgreSQL y FS local→S3 son migraciones previstas; (c) FFmpeg puede sustituirse.
+   155→- Coste que introduce: indirección (puertos + repositorios + inyección en el composition root). Aceptado porque la variabilidad es real y está en el enunciado.
+   156→- Alternativa descartada: (1) hexagonal estricto con capa anti-corrupción por cada proveedor — sobreingeniería para un single-user local (no hay traducción de modelos de dominio externos que justifique ACL formal); (2) arquitectura «big ball of mud» con SDKs importados en los use cases — acopla el núcleo a endpoints concretos y viola la regla del enunciado de intercambiabilidad; (3) microservicios — no hay necesidad de escalado independiente ni de despliegue distribuido (coste operativo alto, beneficio nulo en local).
+   157→
+   158→Módulos concretos (árbol completo en Fase 6 §6.2):
+   159→
+   160→- `app/core`: `config.py` (Pydantic Settings sobre `config.yaml` + env), `errors.py` (taxonomía + RFC 7807), `logging.py`.
+   161→- `app/domain`: `entities/`, `ports/`, `services/` (puros, sin I/O), `enums.py`.
+   162→- `app/application`: casos de uso por operación de negocio.
+   163→- `app/infrastructure`: `persistence/` (SQLAlchemy + repos), `providers/` (adaptadores + `registry.py` + `providers.yaml`), `storage/`, `assembly/`.
+   164→- `app/presentation`: routers FastAPI, schemas Pydantic de request/response, dependencies.
+   165→
+   166→Frontend (organización Átomos → Moléculas → Organismos → Páginas):
+   167→
+   168→- **Átomos** (shadcn/ui + wrappers finos): `Button`, `Badge`, `DurationSlider`, `StatusChip`, `TextField`, `ConfirmDialog`.
+   169→- **Moléculas**: `SceneCard`, `ReferenceCard`, `ReferenceForm`, `AudioPanel`, `GenerateVideoDialog`, `PromptEditor`, `AssetPreview`, `VoicePicker`, `LevelSelector`, `AttributeRows` (render dinámico de §5.4), `ErrorNotice` (problema RFC 7807 → mensaje accionable).
+   170→- **Organismos**: `StoryboardList` (virtualizado), `ReferenceLibrary` (virtualizado), `ProviderSettingsForm`, `AssemblyPanel`, `AudioQAPanel`, `MusicPicker`, `StylePicker`, `ProjectForm`.
+   171→- **Páginas** (react-router-dom): `ProjectsPage` (lista + crear), `ProjectWorkspacePage` (pestañas: Storyboard / Referencias / Activos / Audio / Ensamblaje / QA), `SettingsPage` (proveedores).
+   172→
+   173→### 1.6 Gestión de estado (justificación detallada)
+   174→
+   175→- **Estado de servidor** (proyectos, escenas, referencias, estilos, configs, jobs): TanStack Query. Problema que resuelve: caché, reintentos, listas infinitas con cursor (`useInfiniteQuery`), invalidación tras mutaciones, evita condiciones de carrera de `useEffect`+fetch manual. Coste: convención de claves y boilerplate de invalidación. Alternativa descartada: `useEffect` + estado local (condiciones de carrera y stale reads), Redux RTK Query (boilerplate mayor sin beneficio aquí), SWR (soporte de listas infinitas con cursor menos directo en escenarios de invalidación encadenada).
+   176→- **Estado de cliente** (pestaña activa, escena seleccionada, borradores del editor de prompt, ajustes de vista): Zustand. Problema: estado UI efímero compartido entre organismos sin prop drilling. Coste: disciplina de no duplicar estado de servidor. Alternativa descartada: Redux Toolkit (boilerplate de actions/reducers para una app single-user local), Context API (re-renders en cascada que dañan listas virtualizadas).
+   177→- **Regla de propiedad**: cada dato vive en exactamente un lugar. Nada que venga del API se guarda en Zustand; nada puramente UI se mete en TanStack Query.
+   178→
+   179→### 1.7 Decisiones tecnológicas (resumen; detalle en ADRs)
+   180→
+   181→| Decisión | ADR | Resumen de justificación | Alternativa descartada |
+   182→|---|---|---|---|
+   183→| FastAPI + Pydantic v2 | ADR-010 (contexto) | Async nativo para llamadas a proveedores lentos, validación declarativa, OpenAPI automática | Django (ORM monolítico y peso innecesario), Flask (sin validación ni async nativos) |
+   184→| SQLite + SQLAlchemy 2.0 async + repositorios | ADR-001 | Local, portable, sin servidor; repos abstraen para migrar a PG | PostgreSQL en local (servidor innecesario v1), SQLModel (menos maduro para el mix async/JSONB usado) |
+   185→| Alembic para migraciones | ADR-001 | Historial versionado del esquema; ruta SQLite→PG | `create_all` (sin historial ni retrocompatibilidad) |
+   186→| Atributos dinámicos en JSONB (TEXT JSON en SQLite) + JSON Schema | ADR-003 | Extensibilidad sin migraciones (regla del enunciado) | EAV (consultable pero complejo; no hay requisito de filtrar por atributo), columnas fijas (rígido) |
+   187→| UUID v4 como identidad | ADR-004 | Claves estables en frontend y en reordenaciones (LISTÓN exige «nunca el índice») | INTEGER autoincrement (inestable para keys de React en listas editables) |
+   188→| Paginación por cursor (createdAt+id; order_index en escenas) | ADR-005 | Escalable con n grande; sin saltos ni duplicados bajo inserciones | OFFSET (degradación O(n) y duplicados con datos cambiantes) |
+   189→| Taxonomía de 7 tipos de error + RFC 7807 | ADR-006 | Distingue ausente/nulo/inválido/temporal/auth/config/crítico y no oculta | Excepciones genéricas con mensaje plano; códigos ad hoc inconsistentes |
+   190→| Strategy + Factory con registro `providers.yaml` | ADR-007 | Añadir proveedor = nuevo adaptador + entrada de registro, sin tocar núcleo | if/else por proveedor (vierte detalles de cada API en el núcleo) |
+   191→| React 18 + TS + Vite SPA | ADR-008 | Herramienta local de una página; sin SSR no se justifica Next | Next.js (SSR/RSC innecesarios para un cliente local contra API propia) |
+   192→| shadcn/ui (Radix + Tailwind) | ADR-008 | Accesibilidad incluida, consistencia visual | Librería de componentes con runtime pesado o CSS desde cero |
+   193→| Zustand + TanStack Query + @tanstack/react-virtual | ADR-008 | §1.6 + virtualización del LISTÓN | Redux Toolkit / Apollo / renderizado completo de listas |
+   194→| `DurationMapper` por proveedor | ADR-009 | Mapea 4–15 s del usuario a duraciones soportadas | Rechazar duraciones no exactas (rompe el flujo) |
+   195→| Extensión de `providerType` a `video|tts|llm|image|audio_qa` | ADR-010 | El enunciado exige LLM (mejora+prompts), imágenes base por IA y Earshot; su modelo solo tipaba `video|tts` | Quedarse en dos tipos (obligaría a mezclar LLM/image en tablas ajenas) |
+   196→| FFmpeg vía subprocess encapsulado en `AssemblyService` | ADR-011 | Control total de argumentos, sin shell, timeout configurable; sustituible | MoviePy (abstracción con coste de depuración mayor y dependencia pesada), Celery/cola distribuida (innecesario) |
+   197→| Cifrado Fernet de API keys + secretos por env | ADR-012 | Reposo cifrado; nunca en config versionado | Claves en `config.yaml` (fugas por VCS), claves en claro (inaceptable) |
+   198→| Earshot como `AudioQAProvider` desactivado por defecto | ADR-013 | Módulo opcional del enunciado; sin costo cuando no se usa | Integrarlo al pipeline siempre (costo y dependencia sin requisito) |
+   199→| Sincronismo por operación: storyboard/imágenes/audio sync; video/assembly/audio-qa async | ADR-014 | Latencias: LLM/image/TTS segundos; video/ffmpeg minutos → 202 + sondeo | Todo síncrono (timeouts HTTP), todo job-queue (sobreingeniería v1) |
+   200→| Idioma de los prompts: inglés (historia y UI en español) | ADR-015 | Rendimiento cualitativo de modelos de imagen/video (supuesto A-03); INV-13 lo refuerza | Prompts en español (degradación esperada de calidad) |
+   201→
+   202→### 1.8 Anti-sobreingeniería: patrones usados y patrones descartados
+   203→
+   204→Tabla de patrones usados (problema → coste → alternativa descartada). El resto de patrones del mercado se declara **descartado** con motivo:
+   205→
+   206→| Patrón usado | Problema que resuelve | Coste introducido | Alternativa descartada |
+   207→|---|---|---|---|
+   208→| Capas + puertos (variabilidad real) | Intercambio de proveedores/DB/storage | Indirección | Núcleo acoplado a SDKs concretos |
+   209→| Repository | Migración SQLite→PG sin tocar dominio | Boilerplate | Consultas dispersas en use cases |
+   210→| Strategy + Factory (proveedores) | N proveedores con misma interfaz | Registro + config | if/else en use cases |
+   211→| DTO Pydantic (request/response) | Validación de contrato y OpenAPI | Duplicación entidad/DTO | Entidades expuestas directo (acoplamiento HTTP↔persistencia) |
+   212→| Cursor pagination | Listas escalables estables | Codificación opaca de cursor | OFFSET/LIMIT |
+   213→| JSONB + JSON Schema | Atributos dinámicos | Validación imperativa de profundidad | EAV / columnas fijas |
+   214→| Virtualización (@tanstack/react-virtual) | DOM acotado con miles de escenas | Estimación de alturas y medición | Renderizar todo |
+   215→| React.memo + comparador | Evitar re-render de 200 tarjetas al parchear una | Mantener comparador | Re-render completo |
+   216→
+   217→**Descartados explícitamente** (porque no hay requisito que los justifique y su costo sí existe): microservicios, event sourcing, CQRS, GraphQL, message broker/cola distribuida, OAuth server propio, k8s, i18n multi-idioma (UI solo español, supuesto A-03), caché Redis (la memoria local del cliente TanStack Query basta), autenticación multiusuario real en v1 (queda el hueco §1.10), websockets (el sondeo corto es suficiente en single-user; se reevalúa en v2 si se añade multiusuario).
+   218→
+   219→### 1.9 Cero hardcoding: estrategia de configuración
+   220→
+   221→- Fuente única: `config.yaml` (Anexo A, completo) validado en arranque por Pydantic Settings (`app/core/config.py`); override por variables de entorno para secretos (`AIRSHOT_SECRET_KEY`). Todo límite del sistema referenciado en este documento tiene clave de config: duraciones de escena (§2.3), límites de atributos (§4.2), tamaños de subida (§3.2), paginación (§3.1), timeouts/reintentos/concurrencia por proveedor (Anexo B), parámetros de ensamblaje (§3.2), longitudes de texto de entidades (§2.3: `story.*`, `reference.*`, `visual_style.*`) y caché de media (§3.5: `media.*`).
+   222→- `GET /api/v1/config` expone en runtime los límites efectivos de solo lectura para que el frontend NO duplique constantes de negocio (el slider de duración toma min/default/max de ahí, no de un literal).
+   223→- Constantes técnicas permitidas y justificadas (no son negocio): versión del esquema de atributos `v1`; `UUID` versión 4; encoding JSON UTF-8; base de rutas `/api/v1`; los umbrales de virtualización del frontend (`threshold: 50`, alturas estimadas) por ser constantes de rendimiento de UI documentadas en `src/config/app.config.ts` con justificación (§5.3); nombre del usuario local por defecto (`local-user`, de `config.yaml app.local_user_id`); el rango físico `(0, 1]` de `musicVolume` (fracción de mezcla, no límite de negocio).
+   224→- Los límites del negocio **no** se duplican como CHECKs SQL con literales (§2.4 explica por qué: mantenerlos configurables); solo invariantes estructurales van a la BD.
+   225→
+   226→### 1.10 Preparación multi-tenant (sin implementar ahora)
+   227→
+   228→1. `Depends(get_current_user)` es el único punto de identidad; hoy devuelve `LocalUser` fijo (de config). JWT/OAuth futuro = mismo contrato, otra implementación (sin tocar controllers).
+   229→2. Los repositorios reciben el contexto de usuario en su constructor por sesión; añadir `tenant_id` será: columna nullable + filtro en repos (ADR-001) — cambio aditivo, el dominio no conoce tenancy.
+   230→3. `StorageService` ya direcciona por `projectId` (rutas `outputs/projects/{projectId}/...`), por lo que el aislamiento de ficheros ya es por proyecto y admite prefijo de tenant futuro.
+   231→4. Límite honesto: no hay aislamiento real hoy porque no hay autenticación; esta sección declara el camino, no un estado.
+   232→
+   233→---
+   234→
+   235→## FASE 2 — Modelado de Datos (Base Sólida)
+   236→
+   237→### 2.1 Entidad base
+   238→
+   239→`IEntity` (interfaz de dominio): `id: UUID` y `createdAt: datetime` (UTC, ISO 8601). Implementación en SQLite: `id` como `TEXT(36)` con valor `uuid4` generado por el dominio (no por la BD); `createdAt` como `DateTime` con timezone serializado ISO en SQLite. Las FKs con `ON DELETE` solo se aplican si el engine activa `PRAGMA foreign_keys=ON` por conexión (event listener del engine — ADR-001).
+   240→
+   241→Justificación del UUID v4 (ADR-004). Problema: el LISTÓN exige claves estables en frontend («nunca el índice») y las listas son editables (reordenar/borrar inserta huecos en índices autoincrementales). Coste: índices con insert order aleatorio (fragmentación); aceptable en SQLite local con decenas de miles de filas. Alternativa descartada: `INTEGER PRIMARY KEY` autoincrement (claves de React inestables en listas editables; además impide fusionar datos multi-tenant futuros sin colisiones).
+   242→
+   243→### 2.2 Diagrama entidad-relación
+   244→
+   245→```
+   246→Project 1 ──── n Scene
+   247→Project 1 ──── n AssemblyJob
+   248→Project 1 ──── 0..1 musicAsset (storage key)
+   249→Scene   n ──── n Reference        (a través de SceneReference, kind: subject|environment)
+   250→Project * ── 0..1 VisualStyle   (un proyecto referencia 0..1 estilo; un estilo puede usarse en muchos proyectos; FK nullable visual_style_id)
+   251→Reference: project_id nullable  ⇔  library_scope ∈ {global, project}
+   252→ProviderConfig: sin FK (proveedores independientes de proyectos; el proyecto guarda el *nombre* del proveedor activo)
+   253→```
+   254→
+   255→El modelo relacional completo (columnas, tipos, nulidad) se declara en SQLAlchemy 2.0 `Mapped`/`mapped_column` con tipos dialecto-conscientes: `JSONVariant` = `sa.JSON().with_variant(postgresql.JSONB, "postgresql")` para que la misma definición de columnas sea JSONB nativa en PostgreSQL y TEXT-JSON en SQLite (ruta de migración ADR-001/ADR-003).
+   256→
+   257→### 2.3 Entidades (especificación completa de campos)
+   258→
+   259→Formato de las tablas: **nulidad** y **semántica del null** siguen la taxonomía canónica de F3 §3.1 (null ≠ ausente). «Config» indica la clave de `config.yaml` (Anexo A) que gobierna cualquier límite mencionado — cero hardcoding. `createdAt` (y `updatedAt` donde procede) heredan de `IEntity` (§2.1) en todas las entidades y no se repiten fila a fila.
+   260→
+   261→#### Project
+   262→
+   263→| Campo | Tipo | Nulidad / semántica | Restricciones |
+   264→|---|---|---|---|
+   265→| `id` | UUID | no nulo | PK |
+   266→| `title` | TEXT | no nulo | longitud ≥ 1 y ≤ `story.max_title_length` (200) — validado en API |
+   267→| `originalStory` | TEXT | no nulo | longitud ≤ `story.max_original_story_length` (100000) |
+   268→| `improvedStory` | TEXT | **null = aún no se ha generado el storyboard** (documentado, no «vacío») | se llena en UC-02 |
+   269→| `visualStyleId` | UUID FK | **null = sin estilo elegido** (los prompts no incorporan fragmento de estilo) | FK a VisualStyle, ON DELETE SET NULL; renombrado desde `visualStyle` del enunciado para hacer explícita la clave foránea |
+   270→| `videoProvider` | TEXT | **null = no elegido todavía**; al llamar a generate-video sin valor → 409 `PROVIDER_NOT_CONFIGURED` | nombre del proveedor registrado en `providers.yaml` |
+   271→| `ttsProvider` | TEXT | igual semántica que `videoProvider`; valor por defecto asignado en creación: `"voicestudio"` (default del config `providers.default_tts`) | nombre registrado |
+   272→| `outputFormat` | enum | no nulo; default `mp4` | único valor v1: `mp4` (enum abierto a extensión) |
+   273→| `outputResolution` | enum | no nulo; default `720p` | `720p` \| `1080p` |
+   274→| `voiceId` | TEXT | **null = usa la voz por defecto del proveedor TTS** (cadena de herencia: escena → proyecto → default del proveedor; cadena documentada, no silenciosa: la UI la muestra) | id de voz del proveedor activo |
+   275→| `musicAssetKey` | TEXT | **null = sin música** | storage key válida asignada por `POST /projects/{id}/music` |
+   276→| `musicVolume` | REAL | no nulo; default `assembly.music_default_volume` (0.25) | rango (0, 1] validado en API |
+   277→| `musicOriginalName` | TEXT | **null = sin música o nombre no conservado** | metadato de la subida (nunca ruta — §3.5) |
+   278→| `musicDurationSeconds` | REAL | **null = sin música** | duración detectada con ffprobe al subir |
+   279→| `status` | enum `ProjectStatus` | no nulo; default `draft` | ver estados abajo |
+   280→| `createdAt` / `updatedAt` | datetime | no nulos | orden de paginación por defecto |
+   281→
+   282→`ProjectStatus`: `draft` (creado, sin storyboard) → `storyboard_ready` (escenas generadas) → `in_production` (primer asset generado) → `assembling` (job de ensamblaje en curso) → `assembled`; `failed` es terminal-reintentable (ver F3 §3.4). Las transiciones las ejecutan los use cases; la BD no las impone (los estados son flujo de aplicación, no invariantes estructurales).
+   283→
+   284→#### Scene
+   285→
+   286→| Campo | Tipo | Nulidad / semántica | Restricciones |
+   287→|---|---|---|---|
+   288→| `id` | UUID | no nulo | PK |
+   289→| `projectId` | UUID FK | no nulo | FK Project ON DELETE CASCADE |
+   290→| `orderIndex` | INTEGER | no nulo | renombrado desde `order` del enunciado (`ORDER` es palabra reservada SQL); único dentro del proyecto (índice único compuesto); ≥ 0; contiguo (0..n-1), garantizado por el servicio de reorden |
+   291→| `originalText` | TEXT | no nulo | fragmento de `originalStory` asignado por el storyboard |
+   292→| `improvedText` | TEXT | **null = storyboard sin mejorar o pendiente de edición** | longitud ≤ `story.max_original_story_length` |
+   293→| `promptEn` | TEXT | **null = prompt aún no generado/editado** | longitud ≤ `scene.prompt_max_length` (2000) |
+   294→| `durationSeconds` | INTEGER | no nulo; default `scene.default_duration_seconds` (6) | rango [4, 15] **validado en API a partir de `scene.min/max_duration_seconds`** — deliberadamente NO es CHECK SQL (ver §2.4) |
+   295→| `narrationSource` | enum | no nulo; default `improved` | `improved` \| `original` \| `custom` |
+   296→| `narrationText` | TEXT | **null = se deriva de `narrationSource`**; solo se usa si `narrationSource=custom` | longitud ≤ `scene.prompt_max_length` |
+   297→| `voiceId` | TEXT | **null = hereda la voz del proyecto** (cadena: escena → proyecto → default del proveedor; la UI muestra la resolución efectiva) | id de voz del proveedor TTS |
+   298→| `imageBasePath` | TEXT | **null = imagen base no generada/subida** | storage key (nunca ruta absoluta) |
+   299→| `videoClipPath` | TEXT | **null = clip no generado** | storage key |
+   300→| `audioPath` | TEXT | **null = narración no generada** | storage key |
+   301→| `audioDurationSeconds` | REAL | **null = narración no generada aún** | duración real del audio generado (la usa el ensamblaje para planificar la mezcla) |
+   302→| `status` | enum `SceneStatus` | no nulo; default `draft` | ver estados abajo |
+   303→| `lastError` | TEXT (JSON problem) | **null = sin error registrado**; contenido = subconjunto RFC 7807 (code, title, detail, retryable) | se conserva hasta el próximo éxito del mismo paso |
+   304→
+   305→`SceneStatus`: `draft` (creada, sin operación) → `image_pending` / `video_pending` / `audio_pending` (operación en curso; video es async) → `image_ready` / `video_ready` / `audio_ready` (último paso solicitado completado, asset path no nulo) → `failed` (última operación falló; conserva assets exitosos previos). Semántica declarada: `status` refleja el **último paso iniciado**, mientras que la **disponibilidad real de cada asset** se deriva de la no-nulidad de su path (`imageBasePath != null` ⇒ imagen disponible). La UI usa ambas cosas (chips de asset + estado de operación). Alternativa descartada: subestados por asset (`imageStatus`, `videoStatus`, `audioStatus`) — triplica el campo de estado sin beneficio para single-user (se anota como extensión v2 si aparecen operaciones paralelas por escena).
+   306→
+   307→#### SceneReference (asociación escena↔referencia; añade estructura al requisito de asignación)
+   308→
+   309→| Campo | Tipo | Nulidad | Restricciones |
+   310→|---|---|---|---|
+   311→| `id` | UUID | no nulo | PK |
+   312→| `sceneId` | UUID FK | no nulo | FK Scene ON DELETE CASCADE |
+   313→| `referenceId` | UUID FK | no nulo | FK Reference ON DELETE CASCADE |
+   314→| `kind` | enum | no nulo | `subject` \| `environment` |
+   315→
+   316→Índice único (`sceneId`, `referenceId`). Límites de conteo por escena (`scene_reference.max_subjects_per_scene` = 2, `max_environments_per_scene` = 2) **validados en el use case**, no CHECK SQL (§2.4). Justificación de la tabla vs lista JSONB en Scene: la asignación es relacional (integridad referencial ON DELETE, reuso de referencias, y conteo consultable) — el patrón de atributos dinámicos de F4 NO aplica a relaciones entre entidades.
+   317→
+   318→#### Reference
+   319→
+   320→| Campo | Tipo | Nulidad / semántica | Restricciones |
+   321→|---|---|---|---|
+   322→| `id` | UUID | no nulo | PK |
+   323→| `projectId` | UUID FK | **null ⇔ `libraryScope = "global"`** (CHECK estructural, ver §2.4) | FK Project ON DELETE CASCADE |
+   324→| `type` | enum | no nulo | `character` \| `location` |
+   325→| `name` | TEXT | no nulo | 1..`reference.max_name_length` (200) caracteres |
+   326→| `description` | TEXT | **null = sin descripción** (no participa en prompt) | ≤ `reference.max_description_length` (2000) caracteres |
+   327→| `attributes` | JSONB (TEXT-JSON en SQLite) | no nulo; default `{}` (objeto vacío ≠ null: null está prohibido aquí porque «sin atributos» se representa con `{}` — decisión explícita documentada) | validado por `ReferenceValidator` (F4) |
+   328→| `referenceImages` | JSONB | no nulo; default `[]` | lista de `ReferenceImageEntry` (abajo); ≤ `reference.max_images_per_reference` (6) por el validador |
+   329→| `libraryScope` | enum | no nulo | `global` \| `project` |
+   330→| `level` | enum | no nulo; default `basic` | `basic` \| `advanced` \| `cinematic` (ver política de uso en §2.6) |
+   331→| `attributesSchemaVersion` | TEXT | no nulo; default `"v1"` | versión del JSON Schema contra el que se validó en escritura |
+   332→
+   333→`ReferenceImageEntry` (estructura interna del array JSONB; validada en el use case):
+   334→
+   335→```json
+   336→{ "id": "uuid-v4", "storageKey": "outputs/.../img.png", "isPrimary": false,
+   337→  "source": "upload" | "ai", "createdAt": "2025-01-01T00:00:00Z" }
+   338→```
+   339→
+   340→Invariantes del array (servicio): ids únicos dentro del array; exactamente una entrada con `isPrimary=true` si el array no está vacío (si no, ninguna); `storageKey` existente en StorageService.
+   341→
+   342→#### VisualStyle
+   343→
+   344→| Campo | Tipo | Nulidad | Restricciones |
+   345→|---|---|---|---|
+   346→| `id` | UUID | no nulo | PK |
+   347→| `name` | TEXT | no nulo | único |
+   348→| `description` | TEXT | **null = sin descripción** | ≤ `visual_style.max_description_length` (500) caracteres |
+   349→| `promptFragmentEn` | TEXT | no nulo | ≤ `visual_style.max_prompt_fragment_length` (1000) caracteres; inglés (A-03) |
+   350→| `isCustom` | BOOLEAN | no nulo | `false` = sembrado por migración idempotente desde `styles.yaml`; `true` = creado por usuario |
+   351→| `createdAt` | datetime | no nulo | — |
+   352→
+   353→Regla de negocio: borrar un estilo con `isCustom=false` → 409 `DELETION_FORBIDDEN` (los seeds son parte del producto). Se permite PATCH del `promptFragmentEn` de seeds (el usuario puede ajustar), prohibido cambiar `isCustom`.
+   354→
+   355→#### ProviderConfig
+   356→
+   357→| Campo | Tipo | Nulidad / semántica | Restricciones |
+   358→|---|---|---|---|
+   359→| `id` | UUID | no nulo | PK |
+   360→| `providerType` | enum | no nulo | `video` \| `tts` \| `llm` \| `image` \| `audio_qa` (extensión justificada en ADR-010) |
+   361→| `providerName` | TEXT | no nulo | único compuesto con `providerType`; debe existir en `providers.yaml` (validación contra registro — error de configuración si no) |
+   362→| `apiKeyEncrypted` | TEXT | **null = key no configurada**; usar el proveedor sin key → 409 `PROVIDER_NOT_CONFIGURED` (fail fast, nunca null silencioso) | ciphertext Fernet (ADR-012) |
+   363→| `baseUrl` | TEXT | **null = usa el `base_url` por defecto del registro `providers.yaml`** (herencia documentada y mostrada en UI) | URL absoluta |
+   364→| `defaultParams` | JSONB | no nulo; default `{}` | pases de parámetros por proveedor; claves validadas contra `providers.yaml` (unknown key → 422, no se descartan en silencio) |
+   365→| `isActive` | BOOLEAN | no nulo; default `true` | un proveedor activo por tipo puede marcarse; el proyecto referencia por nombre |
+   366→| `lastCheck` | JSONB | **null = nunca probado** | resultado del `POST /{id}/test` (ok, latencyMs, error code) |
+   367→
+   368→#### AssemblyJob
+   369→
+   370→| Campo | Tipo | Nulidad | Restricciones |
+   371→|---|---|---|---|
+   372→| `id` | UUID | no nulo | PK |
+   373→| `projectId` | UUID FK | no nulo | FK ON DELETE CASCADE |
+   374→| `jobType` | enum | no nulo | `assembly` \| `audio_qa` (Earshot reutiliza esta entidad; extensión documentada en ADR-013/014) |
+   375→| `status` | enum | no nulo; default `pending` | `pending` \| `running` \| `completed` \| `failed` |
+   376→| `outputPath` | TEXT | **null = sin salida (pendiente, failed, o audio_qa sin archivo)** | storage key |
+   377→| `report` | JSONB | **null = sin reporte** (audio_qa escribe métricas/observaciones) | forma del reporte definida al integrar Earshot (supuesto A-06) |
+   378→| `errorMessage` | TEXT (JSON problem) | **null = sin error** | snapshot RFC 7807 (code/title/detail/retryable) |
+   379→| `params` | JSONB | no nulo | snapshot inmutable de parámetros de ejecución (includeAudio, musicAssetKey, musicVolume, resolución, fps…) para reproducibilidad |
+   380→| `startedAt` / `finishedAt` | datetime | **null = no ocurrió** | — |
+   381→| `createdAt` | datetime | no nulo | orden de paginación |
+   382→
+   383→### 2.4 Invariantes, validaciones y dónde se aplican
+   384→
+   385→Tabla canónica (INV). Principio declarado: **los invariantes estructurales van a la BD (CHECKs); los límites de negocio NO (viven en config y se validan en API/servicio), para que cambiar un límite no requiera migración de esquema** (cero hardcoding, LISTÓN punto 6). Cada fila declara capa de aplicación.
+   386→
+   387→| INV | Invariante | Capa |
+   388→|---|---|---|
+   389→| INV-01 | `Scene.projectId` existe; borrar proyecto borra sus escenas | BD (FK CASCADE) |
+   390→| INV-02 | `Scene.orderIndex` único por proyecto y ≥ 0; contigüidad 0..n-1 tras cada operación de orden | BD (índice único compuesto) + servicio (contigüidad) |
+   391→| INV-03 | `durationSeconds` ∈ [min, max] de config | API (Pydantic, lee config) — no CHECK SQL (deliberado, ver principio) |
+   392→| INV-04 | `Reference`: `libraryScope="global"` ⇔ `projectId IS NULL` | BD (CHECK compuesto; invariante estructural, no límite) |
+   393→| INV-05 | `referenceImages`: ≤ max de config; ids únicos; 1 primaria si no vacío | Servicio/validador (config) |
+   394→| INV-06 | `attributes`: valida contra JSON Schema v1 + límites de config | `ReferenceValidator` (F4) |
+   395→| INV-07 | `ProviderConfig (providerType, providerName)` único; `providerName` ∈ registro `providers.yaml` | BD (único compuesto) + validación contra registro |
+   396→| INV-08 | `Scene.status` solo transiciones válidas (§2.3) | Use case (máquina de estados en dominio) |
+   397→| INV-09 | Ensamblaje solo si todas las escenas tienen video y (audio o `assembly.require_audio=false`) | Use case (409 si no) |
+   398→| INV-10 | `SceneReference` única por (sceneId, referenceId); conteos por kind ≤ config | BD (único) + API (conteos) |
+   399→| INV-11 | `VisualStyle.name` único; `isCustom=false` no borrable | BD + use case |
+   400→| INV-12 | `AssemblyJob` con `jobType=assembly` solo `completed` si `outputPath` no nulo | Use case |
+
+[showing lines 1-400 of 1558; use offset=401 with limit to continue reading]
