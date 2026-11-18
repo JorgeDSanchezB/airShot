@@ -48,26 +48,26 @@ export function ProjectFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Nuevo proyecto</DialogTitle>
+          <DialogTitle className="font-display text-base">Nuevo proyecto</DialogTitle>
           <DialogDescription>Pega tu historia; el storyboard (mejora + escenas + prompts EN) se genera en el paso siguiente.</DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
+        <div className="space-y-4">
           <div className="space-y-1">
-            <Label htmlFor="title">Título</Label>
+            <Label htmlFor="title" className="text-xs text-muted-foreground">Título</Label>
             <Input id="title" value={title} maxLength={maxTitle} onChange={(e) => setTitle(e.target.value)} placeholder="Mi historia" />
           </div>
           <div className="space-y-1">
             <div className="flex items-center justify-between">
-              <Label htmlFor="story">Historia original</Label>
-              <span className="font-mono text-[10px] text-muted-foreground">{story.length}/{maxStory}</span>
+              <Label htmlFor="story" className="text-xs text-muted-foreground">Historia original</Label>
+              <span className="slug font-mono text-[10px] text-muted-foreground">{story.length}/{maxStory}</span>
             </div>
             <Textarea id="story" value={story} rows={8} onChange={(e) => setStory(e.target.value)} placeholder="Pega aquí la historia completa…" />
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1">
-              <Label>Proveedor de vídeo</Label>
+              <Label className="text-xs text-muted-foreground">Proveedor de vídeo</Label>
               <Select value={videoProvider ?? defaultVideo} onValueChange={setVideoProvider}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -78,7 +78,7 @@ export function ProjectFormDialog({
               </Select>
             </div>
             <div className="space-y-1">
-              <Label>Proveedor TTS</Label>
+              <Label className="text-xs text-muted-foreground">Proveedor TTS</Label>
               <Select value={ttsProvider ?? defaultTts} onValueChange={setTtsProvider}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -89,7 +89,7 @@ export function ProjectFormDialog({
               </Select>
             </div>
             <div className="space-y-1">
-              <Label>Estilo visual</Label>
+              <Label className="text-xs text-muted-foreground">Estilo visual</Label>
               <Select value={styleId} onValueChange={setStyleId}>
                 <SelectTrigger><SelectValue placeholder="sin estilo" /></SelectTrigger>
                 <SelectContent>
@@ -101,7 +101,7 @@ export function ProjectFormDialog({
               </Select>
             </div>
             <div className="space-y-1">
-              <Label>Resolución</Label>
+              <Label className="text-xs text-muted-foreground">Resolución</Label>
               <Select value={resolution} onValueChange={setResolution}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -111,7 +111,7 @@ export function ProjectFormDialog({
               </Select>
             </div>
             <div className="space-y-1 sm:col-span-2">
-              <Label>Voz por defecto (TTS)</Label>
+              <Label className="text-xs text-muted-foreground">Voz por defecto (TTS)</Label>
               <Select value={voiceId} onValueChange={setVoiceId}>
                 <SelectTrigger><SelectValue placeholder="voz del proveedor" /></SelectTrigger>
                 <SelectContent>
@@ -123,6 +123,7 @@ export function ProjectFormDialog({
               </Select>
             </div>
           </div>
+          <p className="font-mono text-[10px] text-muted-foreground">defaults de runtime-config: {defaultVideo} · {defaultTts}</p>
         </div>
         <DialogFooter>
           <Button
@@ -145,7 +146,7 @@ export function ProjectFormDialog({
               })
             }}
           >
-            Crear proyecto
+            <Plus className="size-3" /> Crear proyecto
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -210,15 +211,15 @@ export function ReferenceFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>{editing !== null ? 'Editar referencia' : 'Nueva referencia'}</DialogTitle>
+          <DialogTitle className="font-display text-base">{editing !== null ? 'Editar referencia' : 'Nueva referencia'}</DialogTitle>
           <DialogDescription>{descriptionText}</DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1">
-              <Label>Tipo</Label>
+              <Label className="text-xs text-muted-foreground">Tipo</Label>
               <Select value={type} onValueChange={(v) => setType(v as 'character' | 'location')}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -228,27 +229,30 @@ export function ReferenceFormDialog({
               </Select>
             </div>
             <div className="space-y-1">
-              <Label>Nivel</Label>
+              <Label className="text-xs text-muted-foreground">Nivel</Label>
               <Select value={level} onValueChange={(v) => setLevel(v as 'basic' | 'advanced' | 'cinematic')}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="basic">basic</SelectItem>
-                  <SelectItem value="advanced">advanced</SelectItem>
-                  <SelectItem value="cinematic">cinematic</SelectItem>
+                  <SelectItem value="basic">básico</SelectItem>
+                  <SelectItem value="advanced">avanzado</SelectItem>
+                  <SelectItem value="cinematic">cinemático</SelectItem>
                 </SelectContent>
               </Select>
             </div>
           </div>
           <div className="space-y-1">
-            <Label htmlFor="ref-name">Nombre</Label>
+            <Label htmlFor="ref-name" className="text-xs text-muted-foreground">Nombre</Label>
             <Input id="ref-name" value={name} maxLength={config?.reference.max_name_length ?? 200} onChange={(e) => setName(e.target.value)} placeholder="Vera" />
           </div>
           <div className="space-y-1">
-            <Label htmlFor="ref-desc">Descripción (opcional)</Label>
+            <Label htmlFor="ref-desc" className="text-xs text-muted-foreground">Descripción (opcional)</Label>
             <Textarea id="ref-desc" value={description} rows={2} maxLength={config?.reference.max_description_length ?? 2000} onChange={(e) => setDescription(e.target.value)} placeholder="Detective retirada, abrigo largo…" />
           </div>
           <div className="space-y-2">
-            <Label>Atributos dinámicos (key minúscula camelCase)</Label>
+            <div className="flex items-center justify-between">
+              <Label className="text-xs text-muted-foreground">Atributos dinámicos (key minúscula camelCase)</Label>
+              <span className="slug font-mono text-[10px] text-muted-foreground">{rows.length}/{maxFields}</span>
+            </div>
             {rows.map((row, index) => (
               <div key={index} className="flex gap-2">
                 <Input
@@ -312,24 +316,24 @@ export function StyleFormDialog({ open, onOpenChange, config }: { open: boolean;
   const maxFragment = config?.visual_style.max_prompt_fragment_length ?? 1000
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Nuevo estilo visual (custom)</DialogTitle>
+          <DialogTitle className="font-display text-base">Nuevo estilo visual (custom)</DialogTitle>
           <DialogDescription>El fragmento se añade a los prompts EN de las escenas del proyecto.</DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
+        <div className="space-y-4">
           <div className="space-y-1">
-            <Label htmlFor="style-name">Nombre</Label>
+            <Label htmlFor="style-name" className="text-xs text-muted-foreground">Nombre</Label>
             <Input id="style-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Golden hour documentary" />
           </div>
           <div className="space-y-1">
-            <Label htmlFor="style-desc">Descripción</Label>
+            <Label htmlFor="style-desc" className="text-xs text-muted-foreground">Descripción</Label>
             <Input id="style-desc" value={description} maxLength={config?.visual_style.max_description_length ?? 500} onChange={(e) => setDescription(e.target.value)} />
           </div>
           <div className="space-y-1">
             <div className="flex items-center justify-between">
-              <Label htmlFor="style-fragment">promptFragmentEn (inglés)</Label>
-              <span className="font-mono text-[10px] text-muted-foreground">{fragment.length}/{maxFragment}</span>
+              <Label htmlFor="style-fragment" className="text-xs text-muted-foreground">promptFragmentEn (inglés)</Label>
+              <span className="slug font-mono text-[10px] text-muted-foreground">{fragment.length}/{maxFragment}</span>
             </div>
             <Textarea id="style-fragment" value={fragment} rows={3} className="font-mono text-xs" onChange={(e) => setFragment(e.target.value)} placeholder="golden hour natural light, documentary photography" />
           </div>
@@ -387,18 +391,18 @@ export function ProviderConfigFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{editing !== null ? `Editar config · ${editing.providerName}` : 'Configurar proveedor'}</DialogTitle>
+          <DialogTitle className="font-display text-base">{editing !== null ? `Editar config · ${editing.providerName}` : 'Configurar proveedor'}</DialogTitle>
           <DialogDescription>
             La API key se cifra en el servidor (AES-256-GCM) y nunca se devuelve completa — solo sus últimos 4 caracteres.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
+        <div className="space-y-4">
           {editing === null && (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1">
-                <Label>Tipo</Label>
+                <Label className="text-xs text-muted-foreground">Tipo</Label>
                 <Select value={providerType} onValueChange={(v) => { setProviderType(v); setProviderName('') }}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -411,7 +415,7 @@ export function ProviderConfigFormDialog({
                 </Select>
               </div>
               <div className="space-y-1">
-                <Label>Proveedor</Label>
+                <Label className="text-xs text-muted-foreground">Proveedor</Label>
                 <Select value={providerName} onValueChange={setProviderName}>
                   <SelectTrigger><SelectValue placeholder="registrados" /></SelectTrigger>
                   <SelectContent>
@@ -425,15 +429,15 @@ export function ProviderConfigFormDialog({
           )}
           {editing === null || editKey ? (
             <div className="space-y-1">
-              <Label htmlFor="api-key">API key {editing !== null ? '(vacío = conservar la actual)' : ''}</Label>
+              <Label htmlFor="api-key" className="text-xs text-muted-foreground">API key {editing !== null ? '(vacío = conservar la actual)' : ''}</Label>
               <Input id="api-key" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-…" autoComplete="off" />
             </div>
           ) : (
             <Button size="sm" variant="outline" onClick={() => setEditKey(true)}>Cambiar API key ({maskHint})</Button>
           )}
           <div className="space-y-1">
-            <Label htmlFor="base-url">baseUrl (vacío = default del registro)</Label>
-            <Input id="base-url" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.ejemplo.com/v1" />
+            <Label htmlFor="base-url" className="text-xs text-muted-foreground">baseUrl (vacío = default del registro)</Label>
+            <Input id="base-url" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.ejemplo.com/v1" className="font-mono text-xs" />
           </div>
         </div>
         <DialogFooter>

@@ -5,7 +5,7 @@
 // historial con salida descargable, y QA de audio (Earshot, opt-in por config).
 
 import { useRef, useState } from 'react'
-import { Download, Music, Play, Trash2, Wand2 } from 'lucide-react'
+import { Download, Film, Music, Play, Trash2, Wand2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -40,16 +40,21 @@ export function AssemblyTab({ project }: { project: ProjectResponse }) {
     : 0
   const canAssemble = scenes.length > 0 && missingVideo === 0 && missingAudio === 0
   const earshotEnabled = runtime.data?.audio_qa.enabled ?? false
+  // salida más reciente del ensamblaje (presentación: reproductor final)
+  const latestOutput = jobs.find((job) => job.jobType === 'assembly' && job.outputUrl !== null)?.outputUrl ?? null
 
   return (
     <div className="space-y-4">
       <Card className="p-0">
-        <CardContent className="space-y-3 p-4">
+        <CardContent className="space-y-4 p-5">
+          <div>
+            <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-foreground/70">banda sonora · opcional</p>
+            <h3 className="mt-1.5 font-display text-base font-semibold tracking-tight">Música</h3>
+          </div>
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-semibold">Música opcional</h3>
             {project.musicAssetKey !== null && (
-              <Badge variant="secondary" className="gap-1">
-                <Music className="size-3" />
+              <Badge variant="outline" className="gap-1 font-mono text-[10px]">
+                <Music className="size-3" aria-hidden />
                 {project.musicOriginalName ?? 'música'}
                 {project.musicDurationSeconds !== null ? ` · ${project.musicDurationSeconds.toFixed(1)}s` : ''}
               </Badge>
@@ -97,46 +102,63 @@ export function AssemblyTab({ project }: { project: ProjectResponse }) {
                 className="w-40"
                 aria-label="Volumen de la música"
               />
+              <span className="slug font-mono text-[10px] text-muted-foreground">fade out en el ensamblaje</span>
             </div>
           )}
         </CardContent>
       </Card>
 
       <Card className="p-0">
-        <CardContent className="space-y-3 p-4">
+        <CardContent className="space-y-4 p-5">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-semibold">Ensamblaje final</h3>
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-foreground/70">ffmpeg concat · mezcla + fade</p>
+              <h3 className="mt-1.5 font-display text-base font-semibold tracking-tight">Ensamblaje final</h3>
+            </div>
             <div className="ml-auto flex items-center gap-2">
               <Label className="text-xs text-muted-foreground">incluir narración</Label>
               <Switch checked={includeAudio} onCheckedChange={setIncludeAudio} aria-label="Incluir narración" />
             </div>
           </div>
-          <p className="text-xs text-muted-foreground">
-            FFmpeg concat de clips normalizados ({runtime.data?.assembly.output_fps ?? 24} fps) + mezcla narración/música con fade out.
+          <p className="font-mono text-[10px] text-muted-foreground">
+            concat de clips normalizados ({runtime.data?.assembly.output_fps ?? 24} fps) + mezcla narración/música con fade out.
           </p>
           {!canAssemble && (
             <p className="text-xs text-amber-600 dark:text-amber-400">
               Pendiente para ensamblar: {missingVideo} clip(s) de vídeo{missingAudio > 0 ? ` y ${missingAudio} narración(es) (require_audio=${String(runtime.data?.assembly.require_audio ?? true)})` : ''}.
             </p>
           )}
-          <Button className="gap-1" disabled={!canAssemble || assemble.isPending} onClick={() => void assemble.mutateAsync({ projectId: project.id, body: { includeAudio, musicVolume: volume } })}>
+          <Button className="gap-1 shadow-[0_8px_24px_-8px] shadow-primary/40" disabled={!canAssemble || assemble.isPending} onClick={() => void assemble.mutateAsync({ projectId: project.id, body: { includeAudio, musicVolume: volume } })}>
             <Play className="size-4" /> Ensamblar vídeo final
           </Button>
+          {latestOutput !== null && (
+            <div className="space-y-1.5 pt-1">
+              <p className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.15em] text-foreground/70">
+                <Film className="size-3" aria-hidden /> salida final · mp4
+              </p>
+              <div className="overflow-hidden rounded-lg border shadow-[0_18px_40px_-18px] shadow-black/20">
+                <video src={latestOutput} controls preload="metadata" className="aspect-video w-full bg-black/90" />
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
       <Card className="p-0">
-        <CardContent className="space-y-3 p-4">
+        <CardContent className="space-y-4 p-5">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-semibold">QA de audio (Earshot)</h3>
-            {!earshotEnabled && <Badge variant="outline" className="text-[10px]">módulo desactivado en config</Badge>}
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-foreground/70">ebur128 / ffprobe · in-process</p>
+              <h3 className="mt-1.5 font-display text-base font-semibold tracking-tight">QA de audio (Earshot)</h3>
+            </div>
+            {!earshotEnabled && <Badge variant="outline" className="font-mono text-[10px]">módulo desactivado en config</Badge>}
           </div>
-          <p className="text-xs text-muted-foreground">
-            Análisis in-process (ebur128/ffprobe): sonoridad integrada y sincronía. naturalness/artifacts no se miden localmente (se declara, no se inventa).
+          <p className="font-mono text-[10px] text-muted-foreground">
+            sonoridad integrada y sincronía. naturalness/artifacts no se miden localmente (se declara, no se inventa).
           </p>
           <div className="flex flex-wrap gap-3">
             {['loudness', 'sync', 'naturalness', 'artifacts'].map((feature) => (
-              <label key={feature} className="flex items-center gap-1 text-xs">
+              <label key={feature} className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground">
                 <Checkbox
                   checked={qaFeatures.includes(feature)}
                   onCheckedChange={(checked) => {
@@ -154,37 +176,47 @@ export function AssemblyTab({ project }: { project: ProjectResponse }) {
       </Card>
 
       <Card className="p-0">
-        <CardContent className="space-y-2 p-4">
-          <h3 className="text-sm font-semibold">Historial de jobs</h3>
+        <CardContent className="space-y-3 p-5">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-foreground/70">jobs · sondeo</p>
+              <h3 className="mt-1.5 font-display text-base font-semibold tracking-tight">Historial de jobs</h3>
+            </div>
+            <span className="slug font-mono text-[10px] text-muted-foreground">{jobs.length} registros</span>
+          </div>
           {jobs.length === 0 && <p className="text-xs text-muted-foreground">Sin jobs aún.</p>}
           <div className="max-h-96 space-y-2 overflow-y-auto">
             {jobs.map((job) => (
-              <div key={job.id} className="rounded-md border p-2 text-xs">
+              <div key={job.id} className="rounded-md border p-2.5 text-xs transition-colors hover:bg-secondary/50">
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusChip status={job.status} />
-                  <Badge variant="outline" className="text-[10px]">{job.jobType === 'assembly' ? 'ensamblaje' : 'audio-qa'}</Badge>
-                  <span className="font-mono text-[10px] text-muted-foreground">{job.id.slice(0, 8)}…</span>
-                  <span className="ml-auto text-[10px] text-muted-foreground">
+                  <Badge variant="outline" className="font-mono text-[10px] uppercase">{job.jobType === 'assembly' ? 'ensamblaje' : 'audio-qa'}</Badge>
+                  <span className="slug font-mono text-[10px] text-muted-foreground">{job.id.slice(0, 8)}…</span>
+                  <span className="slug ml-auto font-mono text-[10px] text-muted-foreground">
                     {new Date(job.createdAt).toLocaleString('es-EC', { dateStyle: 'short', timeStyle: 'medium' })}
                   </span>
                 </div>
                 {job.errorMessage !== null && (
-                  <p className="mt-1 text-destructive">{job.errorMessage.code}: {job.errorMessage.detail}</p>
+                  <p className="mt-1.5 font-mono text-[10px] text-destructive">{job.errorMessage.code}: {job.errorMessage.detail}</p>
                 )}
-                {job.outputUrl !== null && job.jobType === 'assembly' && (
-                  <a href={job.outputUrl} download className="mt-1 inline-flex items-center gap-1 text-xs underline" target="_blank" rel="noreferrer">
-                    <Download className="size-3" /> Descargar final.mp4
-                  </a>
-                )}
-                {job.outputUrl !== null && job.jobType === 'audio_qa' && (
-                  <a href={job.outputUrl} download className="mt-1 inline-flex items-center gap-1 text-xs underline" target="_blank" rel="noreferrer">
-                    <Download className="size-3" /> Descargar reporte JSON
-                  </a>
+                {job.outputUrl !== null && (
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                    {job.jobType === 'assembly' ? (
+                      <a href={job.outputUrl} download className="inline-flex items-center gap-1 text-xs underline underline-offset-2" target="_blank" rel="noreferrer">
+                        <Download className="size-3" /> Descargar final.mp4
+                      </a>
+                    ) : (
+                      <a href={job.outputUrl} download className="inline-flex items-center gap-1 text-xs underline underline-offset-2" target="_blank" rel="noreferrer">
+                        <Download className="size-3" /> Descargar reporte JSON
+                      </a>
+                    )}
+                    <span className="max-w-full truncate font-mono text-[10px] text-muted-foreground" title={job.outputUrl}>{job.outputUrl}</span>
+                  </div>
                 )}
                 {job.report !== null && (
-                  <details className="mt-1">
-                    <summary className="cursor-pointer text-[10px] text-muted-foreground">reporte</summary>
-                    <pre className="mt-1 max-h-40 overflow-auto rounded bg-muted/60 p-2 text-[10px] leading-tight">{JSON.stringify(job.report, null, 2)}</pre>
+                  <details className="mt-1.5">
+                    <summary className="cursor-pointer font-mono text-[10px] text-muted-foreground">reporte</summary>
+                    <pre className="mt-1 max-h-40 overflow-auto rounded bg-muted/60 p-2 font-mono text-[10px] leading-tight">{JSON.stringify(job.report, null, 2)}</pre>
                   </details>
                 )}
               </div>

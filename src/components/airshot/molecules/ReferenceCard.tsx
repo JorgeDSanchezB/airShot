@@ -31,6 +31,13 @@ const KNOWN_ATTRIBUTE_LABELS: Record<string, string> = {
   palette: 'Paleta',
 }
 
+/** niveles de referencia — enum técnico, etiqueta de UI en español */
+const LEVEL_LABELS: Record<string, string> = {
+  basic: 'básico',
+  advanced: 'avanzado',
+  cinematic: 'cinemático',
+}
+
 function formatValue(value: unknown): string {
   if (value === null) return '—'
   if (Array.isArray(value)) return value.map((v) => String(v)).join(', ')
@@ -72,33 +79,39 @@ function ReferenceCardImpl({ reference, config, onEdit }: Props) {
   const maxImages = config?.reference.max_images_per_reference ?? 6
 
   return (
-    <Card className="p-0">
-      <CardContent className="space-y-3 p-4">
+    <Card className="group elevate-hover h-full p-0 hover:border-primary/40">
+      <CardContent className="space-y-3 p-5">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={reference.type === 'character' ? 'default' : 'secondary'}>
+          <Badge variant={reference.type === 'character' ? 'default' : 'secondary'} className="font-mono text-[10px] uppercase">
             {reference.type === 'character' ? 'personaje' : 'escenario'}
           </Badge>
-          <p className="text-sm font-medium">{reference.name}</p>
-          <Badge variant="outline" className="text-[10px]">{reference.level}</Badge>
-          <Badge variant="outline" className="text-[10px]">{reference.libraryScope === 'global' ? 'biblioteca global' : 'proyecto'}</Badge>
-          <Button size="icon" variant="ghost" className="ml-auto size-7" onClick={onEdit} aria-label={`Editar ${reference.name}`}>
+          <p className="font-display text-base font-semibold tracking-tight">{reference.name}</p>
+          <Badge variant="outline" className="font-mono text-[10px] uppercase">{LEVEL_LABELS[reference.level] ?? reference.level}</Badge>
+          <Badge variant="outline" className="font-mono text-[10px] uppercase">{reference.libraryScope === 'global' ? 'biblioteca global' : 'proyecto'}</Badge>
+          <Button size="icon" variant="ghost" className="ml-auto size-7 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100" onClick={onEdit} aria-label={`Editar ${reference.name}`}>
             <Pencil className="size-3" />
           </Button>
-          <Button size="icon" variant="ghost" className="size-7 text-destructive" onClick={() => void crud.remove.mutateAsync(reference.id)} aria-label={`Borrar ${reference.name}`}>
+          <Button size="icon" variant="ghost" className="size-7 text-destructive opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100" onClick={() => void crud.remove.mutateAsync(reference.id)} aria-label={`Borrar ${reference.name}`}>
             <Trash2 className="size-3" />
           </Button>
         </div>
         {reference.description !== null && <p className="text-xs text-muted-foreground">{reference.description}</p>}
 
-        <AttributeRows attributes={reference.attributes} />
+        <div className="border-t border-dashed pt-3">
+          <AttributeRows attributes={reference.attributes} />
+        </div>
 
         {reference.images.length > 0 && (
           <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
             {reference.images.map((image) => (
-              <div key={image.id} className="group relative overflow-hidden rounded-md border">
-                <img src={image.url} alt={`Imagen de ${reference.name}`} className="aspect-square w-full object-cover" />
+              <div key={image.id} className="group/img relative overflow-hidden rounded-lg border">
+                <img
+                  src={image.url}
+                  alt={`Imagen de ${reference.name}`}
+                  className="aspect-square w-full object-cover transition-transform duration-300 group-hover/img:scale-[1.03]"
+                />
                 {image.isPrimary && <Star className="absolute left-1 top-1 size-3.5 fill-amber-400 text-amber-400" />}
-                <div className="absolute inset-x-0 bottom-0 flex justify-between bg-black/60 p-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                <div className="absolute inset-x-0 bottom-0 flex justify-between bg-black/60 p-0.5 opacity-0 transition-opacity group-hover/img:opacity-100">
                   {!image.isPrimary && (
                     <Button size="icon" variant="ghost" className="size-5" title="Marcar primaria" onClick={() => void crud.setPrimary.mutateAsync({ id: reference.id, imageId: image.id })}>
                       <Star className="size-3" />
@@ -108,13 +121,13 @@ function ReferenceCardImpl({ reference, config, onEdit }: Props) {
                     <Trash2 className="size-3" />
                   </Button>
                 </div>
-                <Badge variant="outline" className="absolute right-1 top-1 bg-background/80 py-0 text-[9px]">{image.source === 'ai' ? 'IA' : 'subida'}</Badge>
+                <Badge variant="outline" className="absolute right-1 top-1 bg-background/80 py-0 font-mono text-[9px] uppercase">{image.source === 'ai' ? 'IA' : 'subida'}</Badge>
               </div>
             ))}
           </div>
         )}
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[10px] text-muted-foreground">{reference.images.length}/{maxImages} imágenes</span>
+        <div className="flex flex-wrap items-center gap-2 border-t border-dashed pt-3">
+          <span className="slug font-mono text-[10px] text-muted-foreground">{reference.images.length}/{maxImages} imágenes</span>
           <Button size="sm" variant="outline" className="ml-auto gap-1" disabled={reference.images.length >= maxImages} onClick={() => imageInputRef.current?.click()}>
             <Upload className="size-3" /> Subir
           </Button>

@@ -3,28 +3,35 @@
 // AirShot — atoms: StatusChip, ErrorNotice (por code, con hints accionables),
 // DurationSlider (límites de runtime-config, nunca constantes propias), Labeled.
 
-import { AlertTriangle, RotateCw } from 'lucide-react'
+import { AlertTriangle, Clapperboard, RotateCw } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 
-const STATUS_STYLES: Record<string, string> = {
-  draft: 'bg-muted text-muted-foreground',
-  storyboard_ready: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300',
-  in_production: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
-  assembling: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
-  assembled: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300',
-  failed: 'bg-destructive/15 text-destructive',
-  image_pending: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
-  video_pending: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
-  audio_pending: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
-  image_ready: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300',
-  video_ready: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300',
-  audio_ready: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300',
-  pending: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
-  running: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
-  completed: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300',
+/* semántica de color por familia de estado (dot + tinte suave) */
+type StatusTone = 'neutral' | 'ok' | 'busy' | 'error'
+
+const TONE_CLASSES: Record<StatusTone, string> = {
+  neutral: 'bg-muted text-muted-foreground',
+  ok: 'bg-emerald-600/12 text-emerald-700 dark:bg-emerald-400/12 dark:text-emerald-300',
+  busy: 'bg-primary/12 text-primary',
+  error: 'bg-destructive/12 text-destructive',
+}
+
+const TONE_DOT: Record<StatusTone, string> = {
+  neutral: 'bg-muted-foreground/60',
+  ok: 'bg-emerald-500',
+  busy: 'bg-primary',
+  error: 'bg-destructive',
+}
+
+function toneFor(status: string): StatusTone {
+  if (status === 'failed') return 'error'
+  if (status === 'draft') return 'neutral'
+  if (status.endsWith('_ready') || status === 'storyboard_ready' || status === 'assembled' || status === 'completed') return 'ok'
+  if (status.endsWith('_pending') || status === 'running' || status === 'pending' || status === 'in_production' || status === 'assembling') return 'busy'
+  return 'neutral'
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -46,7 +53,13 @@ const STATUS_LABELS: Record<string, string> = {
 }
 
 export function StatusChip({ status }: { status: string }) {
-  return <Badge variant="secondary" className={STATUS_STYLES[status] ?? 'bg-muted text-muted-foreground'}>{STATUS_LABELS[status] ?? status}</Badge>
+  const tone = toneFor(status)
+  return (
+    <Badge variant="secondary" className={`gap-1.5 rounded-full ${TONE_CLASSES[tone]}`}>
+      <span className={`${TONE_DOT[tone]} ${tone === 'busy' ? 'pulse-dot' : ''} size-1.5 rounded-full`} aria-hidden />
+      {STATUS_LABELS[status] ?? status}
+    </Badge>
+  )
 }
 
 /** §5.4/§3.1.1: ErrorNotice por `code`; retryable ⇒ botón reintentar accionable. */
@@ -99,7 +112,7 @@ export function DurationSlider({
         className="w-32"
         aria-label="Duración de la escena en segundos"
       />
-      <span className="w-10 text-right font-mono text-xs">{value}s</span>
+      <span className="slug w-10 text-right font-mono text-xs text-muted-foreground">{value}s</span>
     </div>
   )
 }
@@ -119,9 +132,13 @@ export function NullOrUnknown({ children, unknown }: { children: React.ReactNode
 
 export function EmptyState({ label, hint }: { label: string; hint?: string }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-lg border border-dashed p-8 text-center">
-      <p className="text-sm font-medium text-muted-foreground">{label}</p>
-      {hint !== undefined && <p className="mt-1 text-xs text-muted-foreground/70">{hint}</p>}
+    <div className="relative flex flex-col items-center justify-center overflow-hidden rounded-xl border border-dashed py-14 text-center">
+      <div className="projector-glow pointer-events-none absolute inset-0" aria-hidden />
+      <span className="flex size-12 items-center justify-center rounded-full border bg-card text-muted-foreground">
+        <Clapperboard className="size-5" aria-hidden />
+      </span>
+      <p className="mt-4 font-display text-sm font-medium">{label}</p>
+      {hint !== undefined && <p className="mt-1 max-w-sm text-xs text-muted-foreground/80">{hint}</p>}
     </div>
   )
 }

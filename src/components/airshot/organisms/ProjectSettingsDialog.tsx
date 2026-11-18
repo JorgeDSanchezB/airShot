@@ -4,6 +4,7 @@
 // (proveedores, estilo, resolución, voz) vía PATCH con semántica ausente≠nulo.
 
 import { useState } from 'react'
+import { Save } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
@@ -40,19 +41,19 @@ export function SettingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Ajustes del proyecto</DialogTitle>
+          <DialogTitle className="font-display text-base">Ajustes del proyecto</DialogTitle>
           <DialogDescription>Semántica PATCH: los campos no editados se conservan; los marcados «—» se envían como null (elección explícita).</DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
+        <div className="space-y-4">
           <div className="space-y-1">
-            <Label htmlFor="proj-title">Título</Label>
+            <Label htmlFor="proj-title" className="text-xs text-muted-foreground">Título</Label>
             <Input id="proj-title" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={runtime.data?.story.max_title_length ?? 200} />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1">
-              <Label>Proveedor de vídeo</Label>
+              <Label className="text-xs text-muted-foreground">Proveedor de vídeo</Label>
               <Select value={videoProvider} onValueChange={setVideoProvider}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -64,7 +65,7 @@ export function SettingsDialog({
               </Select>
             </div>
             <div className="space-y-1">
-              <Label>Proveedor TTS</Label>
+              <Label className="text-xs text-muted-foreground">Proveedor TTS</Label>
               <Select value={ttsProvider} onValueChange={setTtsProvider}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -76,7 +77,7 @@ export function SettingsDialog({
               </Select>
             </div>
             <div className="space-y-1">
-              <Label>Estilo visual</Label>
+              <Label className="text-xs text-muted-foreground">Estilo visual</Label>
               <Select value={styleId} onValueChange={setStyleId}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -88,7 +89,7 @@ export function SettingsDialog({
               </Select>
             </div>
             <div className="space-y-1">
-              <Label>Resolución</Label>
+              <Label className="text-xs text-muted-foreground">Resolución</Label>
               <Select value={resolution} onValueChange={setResolution}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -99,7 +100,7 @@ export function SettingsDialog({
             </div>
           </div>
           <div className="space-y-1">
-            <Label>Voz por defecto</Label>
+            <Label className="text-xs text-muted-foreground">Voz por defecto</Label>
             <Select value={voiceId} onValueChange={setVoiceId}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -109,6 +110,7 @@ export function SettingsDialog({
                 ))}
               </SelectContent>
             </Select>
+            <p className="font-mono text-[10px] text-muted-foreground">escena → proyecto → default del proveedor</p>
           </div>
         </div>
         <DialogFooter>
@@ -131,7 +133,7 @@ export function SettingsDialog({
               })
             }}
           >
-            Guardar ajustes
+            <Save className="size-3.5" /> Guardar ajustes
           </Button>
         </DialogFooter>
       </DialogContent>

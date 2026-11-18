@@ -20,5 +20,6 @@
 | [ADR-014](ADR-014-sincronismo-por-operacion.md) | Sincronismo por operación: sync corto / async largo con sondeo | F3 |
 | [ADR-015](ADR-015-idioma-prompts-ingles.md) | Idioma de los prompts: inglés (historia y UI en español) | F1, F3 |
 | [ADR-016](ADR-016-adaptacion-sandbox-nextjs.md) | Adaptación de la Fase 6 al runtime del sandbox (Next.js 16 + Prisma) y decisiones de implementación | F6 |
+| [ADR-017](ADR-017-identidad-visual-tungsteno.md) | Identidad visual «tungsteno» (paleta, tipografía, motion, monitor de proyección) para el frontend | F6/T17 |
 
 Regla de mantenimiento: cada decisión futura que afecte al núcleo (proveedores, almacenamiento, ensamblaje, esquema de atributos) exige un ADR nuevo; las ediciones de límites de negocio se hacen en `config.yaml` sin ADR.

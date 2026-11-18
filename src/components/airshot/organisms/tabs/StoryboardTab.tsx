@@ -6,7 +6,7 @@
 // referencias asignadas, reordenar/borrar). Virtualización >50 (§5.3).
 
 import { useMemo, useState } from 'react'
-import { RefreshCw, Sparkles } from 'lucide-react'
+import { ChevronDown, RefreshCw, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
@@ -51,33 +51,50 @@ export function StoryboardTab({ project }: { project: ProjectResponse }) {
 
   return (
     <div className="space-y-4">
-      <Card className="p-0">
-        <CardContent className="space-y-3 p-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-semibold">Historia</h3>
-            <span className="font-mono text-[10px] text-muted-foreground">
+      <Card className="group elevate-hover p-0 hover:border-primary/40">
+        <CardContent className="space-y-3 p-4 sm:p-5">
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-foreground/70">guion del proyecto</p>
+              <h3 className="mt-1 font-serif text-lg italic leading-tight text-primary">Historia</h3>
+            </div>
+            <span className="slug font-mono text-[10px] text-muted-foreground">
               {hasStoryboard ? 'storyboard generado' : 'sin storyboard'} · {project.sceneCount} escenas
             </span>
           </div>
           <Collapsible>
             <CollapsibleTrigger asChild>
-              <Button size="sm" variant="ghost" className="text-xs text-muted-foreground">Ver historia original</Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="group gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+              >
+                <ChevronDown className="size-3.5 transition-transform duration-300 group-data-[state=open]:rotate-180" aria-hidden />
+                Ver historia original
+              </Button>
             </CollapsibleTrigger>
             <CollapsibleContent>
-              <p className="whitespace-pre-wrap rounded-md bg-muted/60 p-3 text-xs leading-relaxed">{project.originalStory}</p>
+              <p className="whitespace-pre-wrap rounded-lg bg-muted/50 p-3 text-xs leading-relaxed">{project.originalStory}</p>
             </CollapsibleContent>
           </Collapsible>
           {hasStoryboard && (
             <Collapsible defaultOpen>
               <CollapsibleTrigger asChild>
-                <Button size="sm" variant="ghost" className="text-xs text-muted-foreground">Historia mejorada (improvedStory)</Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="group gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  <ChevronDown className="size-3.5 transition-transform duration-300 group-data-[state=open]:rotate-180" aria-hidden />
+                  Historia mejorada (improvedStory)
+                </Button>
               </CollapsibleTrigger>
               <CollapsibleContent>
-                <p className="whitespace-pre-wrap rounded-md bg-muted/60 p-3 text-xs leading-relaxed">{project.improvedStory}</p>
+                <p className="whitespace-pre-wrap rounded-lg border-l-2 border-primary/40 bg-muted/50 p-3 text-xs leading-relaxed">{project.improvedStory}</p>
               </CollapsibleContent>
             </Collapsible>
           )}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 border-t border-dashed pt-3">
             <Label className="text-xs text-muted-foreground">Duración objetivo por escena</Label>
             <Select value={targetDuration} onValueChange={setTargetDuration}>
               <SelectTrigger className="h-7 w-20 text-xs"><SelectValue /></SelectTrigger>
@@ -89,7 +106,7 @@ export function StoryboardTab({ project }: { project: ProjectResponse }) {
             </Select>
             <Button
               size="sm"
-              className="ml-auto gap-1"
+              className="ml-auto gap-1 shadow-[0_8px_24px_-8px] shadow-primary/50"
               disabled={generateStoryboard.isPending}
               onClick={() => {
                 if (hasStoryboard && !window.confirm('regenerate=true reemplaza las escenas actuales (y sus assets). ¿Continuar?')) return
@@ -108,8 +125,8 @@ export function StoryboardTab({ project }: { project: ProjectResponse }) {
 
       {scenesQuery.isLoading && (
         <div className="space-y-4">
-          <Skeleton className="h-40 w-full" />
-          <Skeleton className="h-40 w-full" />
+          <Skeleton className="h-40 w-full rounded-xl" />
+          <Skeleton className="h-40 w-full rounded-xl" />
         </div>
       )}
 
@@ -140,7 +157,7 @@ export function StoryboardTab({ project }: { project: ProjectResponse }) {
 
       {scenesQuery.hasNextPage && (
         <div className="flex justify-center">
-          <Button variant="outline" onClick={() => void scenesQuery.fetchNextPage()} disabled={scenesQuery.isFetchingNextPage}>
+          <Button variant="outline" className="hover:border-primary/40" onClick={() => void scenesQuery.fetchNextPage()} disabled={scenesQuery.isFetchingNextPage}>
             {scenesQuery.isFetchingNextPage ? 'Cargando…' : 'Cargar más escenas'}
           </Button>
         </div>

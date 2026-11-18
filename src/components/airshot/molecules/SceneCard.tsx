@@ -97,24 +97,26 @@ function SceneCardImpl({ scene, project, config, voices, references, onMoveUp, o
   const environmentsCount = assignDraft.filter((a) => a.kind === 'environment').length
 
   return (
-    <Card className="p-0" id={`scene-${scene.id}`}>
+    <Card className="group elevate-hover p-0 hover:border-primary/40" id={`scene-${scene.id}`}>
       <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0 p-4">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="outline" className="font-mono">#{scene.orderIndex + 1}</Badge>
+          <span className="slug flex h-6 min-w-6 shrink-0 items-center justify-center rounded-md bg-foreground font-mono text-[10px] font-semibold text-background">
+            {scene.orderIndex + 1}
+          </span>
           <StatusChip status={scene.status} />
-          {scene.imageUrl !== null && <Badge variant="secondary">img</Badge>}
-          {scene.videoUrl !== null && <Badge variant="secondary">vid</Badge>}
-          {scene.audioUrl !== null && <Badge variant="secondary">aud</Badge>}
+          {scene.imageUrl !== null && <Badge variant="outline" className="rounded-full font-mono text-[10px]">img</Badge>}
+          {scene.videoUrl !== null && <Badge variant="outline" className="rounded-full font-mono text-[10px]">vid</Badge>}
+          {scene.audioUrl !== null && <Badge variant="outline" className="rounded-full font-mono text-[10px]">aud</Badge>}
           {scene.videoEffectiveSeconds !== null && scene.videoEffectiveSeconds !== scene.durationSeconds && (
-            <Badge variant="outline" title="DurationMapper: duración efectiva del proveedor">vídeo: {scene.videoEffectiveSeconds}s</Badge>
+            <Badge variant="outline" title="DurationMapper: duración efectiva del proveedor" className="slug rounded-full font-mono text-[10px]">vídeo: {scene.videoEffectiveSeconds}s</Badge>
           )}
-          {scene.audioDurationSeconds !== null && <Badge variant="outline">narración: {scene.audioDurationSeconds.toFixed(1)}s</Badge>}
+          {scene.audioDurationSeconds !== null && <Badge variant="outline" className="slug rounded-full font-mono text-[10px]">narración: {scene.audioDurationSeconds.toFixed(1)}s</Badge>}
         </div>
         <div className="flex items-center gap-1">
-          <Button size="icon" variant="ghost" className="size-7" disabled={onMoveUp === undefined} onClick={onMoveUp} aria-label="Subir escena">
+          <Button size="icon" variant="ghost" className="size-7 rounded-full" disabled={onMoveUp === undefined} onClick={onMoveUp} aria-label="Subir escena">
             <ChevronUp className="size-4" />
           </Button>
-          <Button size="icon" variant="ghost" className="size-7" disabled={onMoveDown === undefined} onClick={onMoveDown} aria-label="Bajar escena">
+          <Button size="icon" variant="ghost" className="size-7 rounded-full" disabled={onMoveDown === undefined} onClick={onMoveDown} aria-label="Bajar escena">
             <ChevronDown className="size-4" />
           </Button>
         </div>
@@ -124,12 +126,17 @@ function SceneCardImpl({ scene, project, config, voices, references, onMoveUp, o
 
         <div className="grid gap-3 md:grid-cols-2">
           <div>
-            <Label className="text-xs text-muted-foreground">Texto original</Label>
-            <p className="mt-1 line-clamp-3 rounded-md bg-muted/60 p-2 text-xs leading-relaxed">{scene.originalText}</p>
+            <div className="flex items-center gap-2">
+              <Label className="text-xs text-muted-foreground">Texto original</Label>
+              {scene.improvedText !== null && scene.improvedText === scene.originalText && (
+                <Badge variant="outline" className="py-0 text-[9px] text-muted-foreground">sin cambios</Badge>
+              )}
+            </div>
+            <p className="mt-1 line-clamp-3 rounded-lg bg-muted/50 p-2.5 text-xs leading-relaxed">{scene.originalText}</p>
           </div>
           <div>
             <Label className="text-xs text-muted-foreground">Texto mejorado (narración base)</Label>
-            <p className="mt-1 line-clamp-3 rounded-md bg-muted/60 p-2 text-xs leading-relaxed">{scene.improvedText ?? '—'}</p>
+            <p className="mt-1 line-clamp-3 rounded-lg border-l-2 border-primary/40 bg-muted/50 p-2.5 text-xs leading-relaxed">{scene.improvedText ?? '—'}</p>
           </div>
         </div>
 
@@ -138,7 +145,7 @@ function SceneCardImpl({ scene, project, config, voices, references, onMoveUp, o
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <Label className="text-xs text-muted-foreground">promptEn (inglés · visual)</Label>
-            <span className="font-mono text-[10px] text-muted-foreground">{promptValue.length}/{promptLimit}</span>
+            <span className="slug font-mono text-[10px] text-muted-foreground">{promptValue.length}/{promptLimit}</span>
           </div>
           <Textarea
             value={promptValue}
@@ -151,7 +158,7 @@ function SceneCardImpl({ scene, project, config, voices, references, onMoveUp, o
             <Button
               size="sm"
               variant="outline"
-              className="gap-1"
+              className="gap-1 hover:border-primary/40"
               disabled={promptDraft === null || promptDraft === scene.promptEn || busy}
               onClick={() => {
                 void patchScene.mutateAsync({ id: scene.id, body: { promptEn: promptDraft } })
@@ -180,15 +187,20 @@ function SceneCardImpl({ scene, project, config, voices, references, onMoveUp, o
           <div className="space-y-2">
             <Label className="text-xs text-muted-foreground">Imagen base</Label>
             {scene.imageUrl !== null ? (
-              <img src={scene.imageUrl} alt={`Imagen base de la escena ${scene.orderIndex + 1}`} className="max-h-40 w-full rounded-md border object-cover" />
+              <img src={scene.imageUrl} alt={`Imagen base de la escena ${scene.orderIndex + 1}`} className="aspect-video w-full rounded-lg border object-cover" />
             ) : (
-              <div className="flex h-20 items-center justify-center rounded-md border border-dashed text-xs text-muted-foreground">sin imagen base</div>
+              <div className="flex aspect-video w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed text-xs text-muted-foreground">
+                <span className="flex size-9 items-center justify-center rounded-full border bg-card">
+                  <ImageIcon className="size-4" aria-hidden />
+                </span>
+                sin imagen base
+              </div>
             )}
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" className="gap-1" disabled={busy} onClick={() => void generateImage.mutateAsync(scene.id)}>
+              <Button size="sm" variant="outline" className="gap-1 hover:border-primary/40" disabled={busy} onClick={() => void generateImage.mutateAsync(scene.id)}>
                 <ImageIcon className="size-3" /> Imagen IA
               </Button>
-              <Button size="sm" variant="outline" className="gap-1" disabled={busy} onClick={() => imageInputRef.current?.click()}>
+              <Button size="sm" variant="outline" className="gap-1 hover:border-primary/40" disabled={busy} onClick={() => imageInputRef.current?.click()}>
                 <Upload className="size-3" /> Subir
               </Button>
               {scene.imageBasePath !== null && (
@@ -215,16 +227,18 @@ function SceneCardImpl({ scene, project, config, voices, references, onMoveUp, o
           <div className="space-y-2">
             <Label className="text-xs text-muted-foreground">Clip de vídeo (image-to-video)</Label>
             {scene.videoUrl !== null ? (
-              <video src={scene.videoUrl} controls className="max-h-40 w-full rounded-md border" />
+              <video src={scene.videoUrl} controls preload="metadata" className="aspect-video w-full rounded-lg border" />
             ) : (
-              <div className="flex h-20 items-center justify-center rounded-md border border-dashed text-xs text-muted-foreground">
+              <div className="flex aspect-video w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed text-xs text-muted-foreground">
+                <span className="flex size-9 items-center justify-center rounded-full border bg-card">
+                  <Film className="size-4" aria-hidden />
+                </span>
                 {scene.imageBasePath === null ? 'requiere imagen base' : 'sin clip'}
               </div>
             )}
             <div className="flex flex-wrap gap-2">
               <Button
                 size="sm"
-                variant="outline"
                 className="gap-1"
                 disabled={busy || scene.imageBasePath === null}
                 onClick={() => void generateVideo.mutateAsync({ id: scene.id, providerOverride: project.videoProvider ?? undefined })}
@@ -277,7 +291,7 @@ function SceneCardImpl({ scene, project, config, voices, references, onMoveUp, o
             <Button
               size="sm"
               variant="outline"
-              className="ml-auto gap-1"
+              className="ml-auto gap-1 hover:border-primary/40"
               disabled={busy}
               onClick={() => void generateAudio.mutateAsync({ id: scene.id, voiceId: scene.voiceId })}
             >
@@ -295,7 +309,7 @@ function SceneCardImpl({ scene, project, config, voices, references, onMoveUp, o
               <Button
                 size="sm"
                 variant="outline"
-                className="gap-1"
+                className="gap-1 hover:border-primary/40"
                 disabled={customText === null || customText === scene.narrationText}
                 onClick={() => {
                   void patchScene.mutateAsync({ id: scene.id, body: { narrationText: customText } })
@@ -324,14 +338,14 @@ function SceneCardImpl({ scene, project, config, voices, references, onMoveUp, o
           {scene.references.map((assignment) => {
             const ref = refById.get(assignment.referenceId)
             return (
-              <Badge key={assignment.referenceId} variant="secondary" className="gap-1">
+              <Badge key={assignment.referenceId} variant="outline" className="gap-1 rounded-full text-[10px]">
                 <Link2 className="size-3" />
                 {ref?.name ?? assignment.referenceId.slice(0, 8)}
-                <span className="text-[10px] text-muted-foreground">{assignment.kind === 'subject' ? 'subj' : 'env'}</span>
+                <span className="slug font-mono text-[10px] text-muted-foreground">{assignment.kind === 'subject' ? 'subj' : 'env'}</span>
               </Badge>
             )
           })}
-          <Button size="sm" variant="outline" className="ml-auto" onClick={() => { setAssignDraft(scene.references); setAssignOpen(true) }}>
+          <Button size="sm" variant="outline" className="ml-auto hover:border-primary/40" onClick={() => { setAssignDraft(scene.references); setAssignOpen(true) }}>
             Asignar
           </Button>
         </div>

@@ -4,7 +4,7 @@
 // escena → proyecto → default del proveedor, mostrada explícitamente) y
 // generación en lote de narraciones pendientes (tope app.batch_max_operations).
 
-import { Mic } from 'lucide-react'
+import { AudioLines, Mic } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
@@ -28,8 +28,11 @@ export function AudioTab({ project }: { project: ProjectResponse }) {
   return (
     <div className="space-y-4">
       <Card className="p-0">
-        <CardContent className="space-y-3 p-4">
-          <h3 className="text-sm font-semibold">Audio del proyecto</h3>
+        <CardContent className="space-y-4 p-5">
+          <div>
+            <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-foreground/70">mesa de mezclas · narración</p>
+            <h3 className="mt-1.5 font-display text-base font-semibold tracking-tight">Audio del proyecto</h3>
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <Label className="text-xs text-muted-foreground">Voz por defecto (heredan las escenas sin voz propia)</Label>
             <Select
@@ -49,17 +52,20 @@ export function AudioTab({ project }: { project: ProjectResponse }) {
               </SelectContent>
             </Select>
           </div>
-          <p className="text-xs text-muted-foreground">
-            Cadena de resolución de voz: escena → proyecto → default del proveedor (documentada, no silenciosa).
+          <p className="font-mono text-[10px] text-muted-foreground">
+            cadena de resolución de voz: escena → proyecto → default del proveedor (documentada, no silenciosa)
           </p>
         </CardContent>
       </Card>
 
       <Card className="p-0">
-        <CardContent className="space-y-3 p-4">
+        <CardContent className="space-y-4 p-5">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-semibold">Narraciones pendientes</h3>
-            <Badge variant="secondary">{pending.length}</Badge>
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-foreground/70">toma a toma</p>
+              <h3 className="mt-1.5 font-display text-base font-semibold tracking-tight">Narraciones pendientes</h3>
+            </div>
+            <Badge variant="outline" className="slug font-mono text-[10px]">{pending.length} pendientes</Badge>
             <Button
               size="sm"
               className="ml-auto gap-1"
@@ -77,20 +83,26 @@ export function AudioTab({ project }: { project: ProjectResponse }) {
             </Button>
           </div>
           {pending.length > batchMax && (
-            <p className="text-xs text-muted-foreground">
+            <p className="font-mono text-[10px] text-muted-foreground">
               Hay {pending.length} pendientes; el lote está acotado a {batchMax} por operación (app.batch_max_operations). Repite tras completar.
             </p>
           )}
           {scenes.length === 0 && <p className="text-xs text-muted-foreground">El proyecto aún no tiene escenas.</p>}
-          <div className="space-y-1">
+          <div>
             {scenes.map((scene) => (
-              <div key={scene.id} className="flex items-center gap-2 text-xs">
-                <Badge variant="outline" className="font-mono">#{scene.orderIndex + 1}</Badge>
+              <div
+                key={scene.id}
+                className="flex items-center gap-2 border-b border-dashed py-2 text-xs transition-colors last:border-b-0 hover:bg-secondary/50"
+              >
+                <Badge variant="outline" className="slug shrink-0 font-mono text-[10px]">#{scene.orderIndex + 1}</Badge>
                 <span className="line-clamp-1 flex-1 text-muted-foreground">
                   {scene.narrationSource === 'custom' ? (scene.narrationText ?? 'custom sin texto') : scene.narrationSource === 'original' ? scene.originalText : (scene.improvedText ?? scene.originalText)}
                 </span>
                 {scene.audioPath !== null ? (
-                  <Badge variant="secondary">audio {scene.audioDurationSeconds !== null ? `${scene.audioDurationSeconds.toFixed(1)}s` : ''}</Badge>
+                  <Badge variant="outline" className="slug shrink-0 font-mono text-[10px]">
+                    <AudioLines className="size-3" aria-hidden />
+                    {scene.audioDurationSeconds !== null ? `${scene.audioDurationSeconds.toFixed(1)}s` : 'audio'}
+                  </Badge>
                 ) : (
                   <Button
                     size="sm"
