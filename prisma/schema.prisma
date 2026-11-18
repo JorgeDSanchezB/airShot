@@ -1,8 +1,12 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+// AirShot — Prisma schema (SQLite)
+// Fase 2 de docs/architecture.md (§2.3), adaptada al runtime del sandbox:
+// - SQLite vía Prisma no soporta enums ni Json nativos → los enums viven como
+//   TEXT validados en la capa de aplicación (zod) y los campos JSONB como TEXT
+//   serializado en los repositorios (misma decisión que ADR-003 para SQLite).
+// - Las invariantes estructurales que el diseño original expresaba como CHECK SQL
+//   se aplican en la capa de aplicación (limitación de Prisma; desviación
+//   documentada en ADR-016).
+// - Identidades: UUID v4 generados por la capa de aplicación (ADR-004).
 
 generator client {
   provider = "prisma-client-js"
@@ -13,20 +17,145 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+model Project {
+  id                   String   @id
+  title                String
+  originalStory        String
+  improvedStory        String?
+  visualStyleId        String?
+  videoProvider        String?
+  ttsProvider          String?
+  outputFormat         String   @default("mp4")
+  outputResolution     String   @default("720p")
+  voiceId              String?
+  musicAssetKey        String?
+  musicVolume          Float    @default(0.25)
+  musicOriginalName    String?
+  musicDurationSeconds Float?
+  status               String   @default("draft")
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  visualStyle VisualStyle?  @relation(fields: [visualStyleId], references: [id], onDelete: SetNull)
+  scenes      Scene[]
+  references  Reference[]
+  assemblyJobs AssemblyJob[]
+
+  @@index([createdAt, id])
+  @@index([status])
 }
 
-model Post {
-  id        String   @id @default(cuid())
-  title     String
-  content   String?
-  published Boolean  @default(false)
-  authorId  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+model Scene {
+  id                    String   @id
+  projectId             String
+  orderIndex            Int
+  originalText          String
+  improvedText          String?
+  promptEn              String?
+  durationSeconds       Int      @default(6)
+  narrationSource       String   @default("improved")
+  narrationText         String?
+  voiceId               String?
+  imageBasePath         String?
+  videoClipPath         String?
+  videoProviderJobId    String?
+  videoEffectiveSeconds Float?
+  audioPath             String?
+  audioDurationSeconds  Float?
+  status                String   @default("draft")
+  lastError             String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  references SceneReference[]
+
+  @@unique([projectId, orderIndex])
+  @@index([projectId, createdAt, id])
+  @@index([projectId, status])
+}
+
+model SceneReference {
+  id          String @id
+  sceneId     String
+  referenceId String
+  kind        String
+
+  scene     Scene     @relation(fields: [sceneId], references: [id], onDelete: Cascade)
+  reference Reference @relation(fields: [referenceId], references: [id], onDelete: Cascade)
+
+  @@unique([sceneId, referenceId])
+  @@index([referenceId])
+}
+
+model Reference {
+  id                       String   @id
+  projectId                String?
+  type                     String
+  name                     String
+  description              String?
+  attributes                String   @default("{}")
+  referenceImages           String   @default("[]")
+  libraryScope             String
+  level                    String   @default("basic")
+  attributesSchemaVersion  String   @default("v1")
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  project      Project?        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sceneRefs    SceneReference[]
+
+  @@index([projectId, createdAt, id])
+  @@index([libraryScope, type, createdAt, id])
+  @@index([createdAt, id])
+}
+
+model VisualStyle {
+  id               String   @id
+  name             String
+  description      String?
+  promptFragmentEn String
+  isCustom         Boolean  @default(false)
+  createdAt        DateTime @default(now())
+
+  projects Project[]
+
+  @@unique([name])
+  @@index([createdAt, id])
+}
+
+model ProviderConfig {
+  id               String   @id
+  providerType     String
+  providerName     String
+  apiKeyEncrypted  String?
+  baseUrl          String?
+  defaultParams    String   @default("{}")
+  isActive         Boolean  @default(true)
+  lastCheck        String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([providerType, providerName])
+  @@index([providerType, createdAt, id])
+  @@index([createdAt, id])
+}
+
+model AssemblyJob {
+  id           String    @id
+  projectId    String
+  jobType      String    @default("assembly")
+  status       String    @default("pending")
+  outputPath   String?
+  report       String?
+  errorMessage String?
+  params       String    @default("{}")
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt, id])
+  @@index([createdAt, id])
 }

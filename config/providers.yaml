@@ -1,0 +1,138 @@
+# AirShot — providers.yaml (registro declarativo de proveedores; Anexo B de docs/architecture.md)
+# Registro de integraciones ESTÁTICAS, sin secretos (las API keys viven cifradas en
+# ProviderConfig — ADR-012). Añadir un proveedor nuevo = añadir una entrada aquí +
+# su adaptador (regla del Carro del LISTÓN, §4.8).
+# "auth" declara cómo se acredita el adaptador:
+#   env      → credenciales provistas por el entorno (SDK z-ai-web-dev-sdk); no requiere ProviderConfig
+#   none     → adaptador local sin credenciales (FFmpeg)
+#   api_key  → exige ProviderConfig con apiKey; si falta → 409 PROVIDER_NOT_CONFIGURED (fail-fast)
+video:
+  veo:
+    adapter: "zai-video-external"
+    auth: "api_key"
+    base_url: "https://generativelanguage.googleapis.com/v1beta"
+    timeout_seconds: 300
+    max_retries: 3
+    backoff_base_seconds: 2.0
+    max_concurrent: 2
+    supported_durations: [4, 6, 8]     # A-02: verificar contra docs del proveedor
+    reference_image_limit: 3           # R-03
+  kling:
+    adapter: "zai-video-external"
+    auth: "api_key"
+    base_url: "https://api.klingai.com/v1"
+    timeout_seconds: 300
+    max_retries: 3
+    backoff_base_seconds: 2.0
+    max_concurrent: 1
+    supported_durations: [5, 10]
+    reference_image_limit: 1
+  runway:
+    adapter: "zai-video-external"
+    auth: "api_key"
+    base_url: "https://api.dev.runwayml.com/v1"
+    timeout_seconds: 300
+    max_retries: 3
+    backoff_base_seconds: 2.0
+    max_concurrent: 1
+    supported_durations: []             # continuo dentro de [scene.min, scene.max]
+    reference_image_limit: 1
+  luma:
+    adapter: "zai-video-external"
+    auth: "api_key"
+    base_url: "https://api.lumalabs.ai/dream-machine/v1"
+    timeout_seconds: 300
+    max_retries: 3
+    backoff_base_seconds: 2.0
+    max_concurrent: 1
+    supported_durations: []             # A-02: verificar límites reales del proveedor
+    reference_image_limit: 1
+  ffmpeg-kenburns:                      # adaptador local (ADR-016): clip real desde la
+    adapter: "ffmpeg-kenburns"          # imagen base con zoompan + duración de la escena
+    auth: "none"
+    base_url: null
+    timeout_seconds: 300
+    max_retries: 1
+    backoff_base_seconds: 1.0
+    max_concurrent: 2
+    supported_durations: []             # continuo dentro de [scene.min, scene.max]
+    reference_image_limit: 1
+
+tts:
+  zai:                                  # SDK z-ai-web-dev-sdk (adaptación sandbox)
+    adapter: "zai-tts"
+    auth: "env"
+    base_url: null
+    timeout_seconds: 60
+    max_retries: 2
+    backoff_base_seconds: 1.5
+    max_concurrent: 2
+    max_text_chars: 1024               # límite del proveedor (chunking en el adaptador)
+    default_voice: "tongtong"
+  voicestudio:                          # A-05: OpenAI-compatible local (default original)
+    adapter: "openai-compat-tts"
+    auth: "none"
+    base_url: "http://localhost:3900/v1"
+    timeout_seconds: 60
+    max_retries: 2
+    backoff_base_seconds: 1.5
+    max_concurrent: 2
+    default_voice: null
+  elevenlabs:
+    adapter: "elevenlabs-tts"
+    auth: "api_key"
+    base_url: "https://api.elevenlabs.io/v1"
+    timeout_seconds: 60
+    max_retries: 2
+    backoff_base_seconds: 1.5
+    max_concurrent: 2
+    default_voice: null
+
+llm:
+  zai:                                  # SDK z-ai-web-dev-sdk (adaptación sandbox)
+    adapter: "zai-llm"
+    auth: "env"
+    base_url: null
+    timeout_seconds: 90
+    max_retries: 2
+    backoff_base_seconds: 2.0
+    max_concurrent: 1
+    default_temperature: 0.4
+  openai_compat:
+    adapter: "openai-compat-llm"
+    auth: "api_key"
+    base_url: "https://api.openai.com/v1"
+    timeout_seconds: 90
+    max_retries: 2
+    backoff_base_seconds: 2.0
+    max_concurrent: 1
+    default_temperature: 0.4
+
+image:
+  zai:                                  # SDK z-ai-web-dev-sdk (adaptación sandbox)
+    adapter: "zai-image"
+    auth: "env"
+    base_url: null
+    timeout_seconds: 60
+    max_retries: 2
+    backoff_base_seconds: 2.0
+    max_concurrent: 1
+    landscape_size: "1344x768"         # preset 16:9 del proveedor
+  openai_compat:
+    adapter: "openai-compat-image"
+    auth: "api_key"
+    base_url: "https://api.openai.com/v1"
+    timeout_seconds: 60
+    max_retries: 2
+    backoff_base_seconds: 2.0
+    max_concurrent: 1
+
+audio_qa:
+  earshot:                              # A-06/ADR-013; mecanismo resuelto en ADR-016:
+    adapter: "earshot"                  # in-process con FFmpeg (ebur128/ffprobe)
+    auth: "none"
+    base_url: null
+    timeout_seconds: 300
+    max_retries: 1
+    backoff_base_seconds: 5.0
+    max_concurrent: 1

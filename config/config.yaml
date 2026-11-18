@@ -1,0 +1,102 @@
+# AirShot — config.yaml (fuente única de límites de negocio; Anexo A de docs/architecture.md)
+# Adaptación Fase 6 al sandbox (ADR-016): los defaults de proveedor apuntan a los
+# adaptadores disponibles en este entorno (zai = SDK z-ai-web-dev-sdk;
+# ffmpeg-kenburns = generador local de clips con FFmpeg). Los proveedores externos
+# (veo/kling/runway/luma/elevenlabs/openai_compat) siguen registrados en providers.yaml
+# y se activan con su API key vía ProviderConfig.
+app:
+  name: "AirShot"
+  local_user_id: "local-user"          # usuario único v1 (hueco auth §3.1.2)
+  max_body_bytes: 52428800             # 50 MiB tope global de body (413); ≥ max(upload.*)
+  request_timeout_seconds: 300         # ops síncronas; ≥ peor caso síncrono del proveedor
+  batch_max_operations: 8             # tamaño máx. de lote de generación por UI
+  pending_stale_ms: 300000            # ventana tras la cual un job *_pending sin runner activo se considera perdido (ronda de corrección B1)
+  log_level: "INFO"
+
+pagination:
+  default_page_size: 25
+  max_page_size: 100
+
+story:
+  max_title_length: 200
+  max_original_story_length: 100000
+
+scene:
+  min_duration_seconds: 4              # LISTÓN: 4
+  default_duration_seconds: 6          # LISTÓN: 6 por defecto
+  max_duration_seconds: 15             # LISTÓN: 15
+  max_scenes_per_project: 200          # R-08
+  prompt_max_length: 2000
+  composed_prompt_max_chars: 16000      # tope del prompt COMPUESTO (escena+estilo+refs) enviado al proveedor de imagen/vídeo (extensión ronda B — antes prompt_max_length*8 hardcodeado)
+
+reference:
+  max_images_per_reference: 6          # LISTÓN: máx. imágenes por personaje/escenario
+  attributes_max_fields: 32
+  attributes_max_depth: 2
+  attributes_max_value_length: 200
+  attributes_max_array_items: 8
+  attributes_max_json_bytes: 16384
+  sensitive_key_denied: ["apikey", "password", "secret", "token", "authorization", "privatekey"]
+  max_name_length: 200
+  max_description_length: 2000
+  attributes_max_nested_fields: 8      # C-12
+  dangerous_key_denied: ["constructor", "prototype", "hasownproperty", "tostring", "valueof"]
+  level_image_limits:                  # política §2.6
+    basic: 1
+    advanced: 2
+    cinematic: null                   # null = hasta el reference_image_limit del proveedor
+
+scene_reference:
+  max_subjects_per_scene: 2
+  max_environments_per_scene: 2
+
+visual_style:
+  max_description_length: 500
+  max_prompt_fragment_length: 1000
+
+upload:
+  image:
+    max_bytes: 10485760               # 10 MiB
+    allowed_mime: ["image/png", "image/jpeg", "image/webp"]
+  music:
+    max_bytes: 52428800               # 50 MiB
+    allowed_mime: ["audio/mpeg", "audio/wav", "audio/ogg"]
+
+assembly:
+  ffmpeg_path: "ffmpeg"
+  ffprobe_path: "ffprobe"
+  job_timeout_seconds: 900
+  require_audio: true                  # INV-09
+  video_codec: "libx264"
+  video_crf: 23
+  video_preset: "medium"
+  output_fps: 24
+  audio_sample_rate: 48000
+  audio_channels: 2
+  audio_bitrate_kbps: 192
+  music_default_volume: 0.25
+  music_fade_out_seconds: 2.0
+
+storage:
+  root: "./data"                       # uploads/ y outputs/ bajo la raíz (§3.5)
+
+media:
+  cache_max_age_seconds: 3600
+
+security:
+  api_key_mask_visible_chars: 4        # INV-14
+
+audio_qa:
+  earshot:
+    enabled: false                     # ADR-013: opcional, desactivado por defecto
+    report_dir: "reports"
+    lufs_target_min: -24               # umbral de sonoridad integrada (EBU R128) para findings
+    lufs_target_max: -16
+    sync_tolerance_seconds: 0.5        # tolerancia de sincronía narración↔clip
+
+providers:
+  default_tts: "zai"                   # adaptación sandbox (original: voicestudio)
+  default_llm: "zai"                   # adaptación sandbox (original: openai_compat)
+  default_image: "zai"                 # adaptación sandbox (original: openai_compat)
+  default_video: "ffmpeg-kenburns"     # extensión documentada (ADR-016): para que el
+                                      # camino dorado funcione sin configurar API keys

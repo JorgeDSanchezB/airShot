@@ -1,0 +1,498 @@
+// AirShot — hooks/airshot.ts (§5.2: claves canónicas + matriz de invalidación)
+// Toda colección P se consume como useInfiniteQuery; sondeo con apagado automático.
+
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
+import { toast } from 'sonner'
+import { api, ApiError } from '@/lib/airshot-client/client'
+import type {
+  AssemblyJobResponse,
+  CursorPage,
+  ProjectResponse,
+  ProjectSummary,
+  ReferenceResponse,
+  SceneResponse,
+} from '@/lib/airshot-client/types'
+
+export const POLL_INTERVAL_MS = 2000
+
+function toastProblem(prefix: string, err: unknown): void {
+  if (err instanceof ApiError) {
+    const hints = err.problem.hints ?? []
+    toast.error(`${prefix}: ${err.problem.detail}`, {
+      description: hints.length > 0 ? hints.join(' · ') : `${err.problem.code} (HTTP ${err.problem.status})${err.problem.retryable ? ' — reintentable' : ''}`,
+    })
+    return
+  }
+  toast.error(`${prefix}: ${err instanceof Error ? err.message : String(err)}`)
+}
+
+// ---------- queries (claves canónicas) ----------
+
+export function useRuntimeConfig() {
+  return useQuery({ queryKey: ['runtime-config'], queryFn: api.getRuntimeConfig, staleTime: 5 * 60 * 1000 })
+}
+
+export function useProjects(filters: { status?: string; q?: string } = {}) {
+  return useInfiniteQuery({
+    queryKey: ['projects', filters],
+    queryFn: ({ pageParam }) => api.listProjects({ limit: 25, cursor: pageParam as string | null, ...filters }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+  })
+}
+
+export function useProject(projectId: string | null) {
+  return useQuery({
+    queryKey: ['project', projectId],
+    queryFn: () => api.getProject(projectId as string),
+    enabled: projectId !== null,
+  })
+}
+
+export function useScenes(projectId: string | null, status?: string) {
+  return useInfiniteQuery({
+    queryKey: ['scenes', projectId, { status }],
+    queryFn: ({ pageParam }) =>
+      api.listScenes(projectId as string, { limit: 25, cursor: pageParam as string | null, sortBy: 'order', order: 'asc', status }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+    enabled: projectId !== null,
+  })
+}
+
+export function useScene(sceneId: string | null) {
+  return useQuery({
+    queryKey: ['scene', sceneId],
+    queryFn: () => api.getScene(sceneId as string),
+    enabled: sceneId !== null,
+    // sondeo con apagado automático: solo mientras hay operación pendiente
+    refetchInterval: (query) => {
+      const status = query.state.data?.status
+      return status !== undefined && status.endsWith('_pending') ? POLL_INTERVAL_MS : false
+    },
+  })
+}
+
+export function useReferences(filters: { scope?: 'global' | 'project'; projectId?: string; type?: string; level?: string; q?: string } = {}) {
+  return useInfiniteQuery({
+    queryKey: ['references', { scope: filters.scope, projectId: filters.projectId, type: filters.type, level: filters.level, q: filters.q }],
+    queryFn: ({ pageParam }) => api.listReferences({ limit: 25, cursor: pageParam as string | null, ...filters }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+  })
+}
+
+export function useStyles(origin?: string) {
+  return useInfiniteQuery({
+    queryKey: ['visual-styles', { origin }],
+    queryFn: ({ pageParam }) => api.listStyles({ limit: 25, cursor: pageParam as string | null, origin }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+  })
+}
+
+export function useProviderConfigs(providerType?: string) {
+  return useInfiniteQuery({
+    queryKey: ['provider-configs', { providerType }],
+    queryFn: ({ pageParam }) => api.listProviderConfigs({ limit: 25, cursor: pageParam as string | null, providerType }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+  })
+}
+
+export function useVoices(provider?: string) {
+  return useInfiniteQuery({
+    queryKey: ['tts-voices', { provider }],
+    queryFn: ({ pageParam }) => api.listVoices({ limit: 25, cursor: pageParam as string | null, provider }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+  })
+}
+
+export function useAssemblies(projectId: string | null) {
+  return useInfiniteQuery({
+    queryKey: ['assemblies', projectId],
+    queryFn: ({ pageParam }) => api.listAssemblies(projectId as string, { limit: 25, cursor: pageParam as string | null }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+    enabled: projectId !== null,
+    refetchInterval: (query) => {
+      const pages = query.state.data?.pages ?? []
+      const active = pages.some((page) => page.items.some((job) => job.status === 'pending' || job.status === 'running'))
+      return active ? POLL_INTERVAL_MS : false
+    },
+  })
+}
+
+export function useJob(jobId: string | null) {
+  return useQuery({
+    queryKey: ['assembly', jobId],
+    queryFn: () => api.getAssemblyJob(jobId as string),
+    enabled: jobId !== null,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status
+      return status === 'pending' || status === 'running' ? POLL_INTERVAL_MS : false
+    },
+  })
+}
+
+export function useHealthDeep(enabled: boolean) {
+  return useQuery({
+    queryKey: ['health', 'deep'],
+    queryFn: () => api.getHealth(true) as Promise<{ status: string; checks: Array<{ name: string; ok: boolean; detail?: string }> }>,
+    enabled,
+    refetchInterval: 30_000,
+  })
+}
+
+// ---------- mutations (matriz de invalidación) ----------
+
+export function useCreateProject() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: api.createProject,
+    onSuccess: () => {
+      toast.success('Proyecto creado')
+      void qc.invalidateQueries({ queryKey: ['projects'] })
+    },
+    onError: (err) => toastProblem('Crear proyecto', err),
+  })
+}
+
+export function usePatchProject() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => api.patchProject(id, body),
+    onSuccess: (project: ProjectResponse) => {
+      toast.success('Proyecto actualizado')
+      void qc.invalidateQueries({ queryKey: ['project', project.id] })
+      void qc.invalidateQueries({ queryKey: ['projects'] })
+    },
+    onError: (err) => toastProblem('Actualizar proyecto', err),
+  })
+}
+
+export function useDeleteProject() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.deleteProject(id),
+    onSuccess: () => {
+      toast.success('Proyecto borrado (assets incluidos)')
+      void qc.invalidateQueries({ queryKey: ['projects'] })
+    },
+    onError: (err) => toastProblem('Borrar proyecto', err),
+  })
+}
+
+export function useGenerateStoryboard() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ projectId, body }: { projectId: string; body: { regenerate?: boolean; targetDurationSeconds?: number } }) =>
+      api.generateStoryboard(projectId, body),
+    onSuccess: (result, vars) => {
+      toast.success(`Storyboard listo: ${result.scenes.length} escenas`)
+      // reemplaza escenas: refetch completo de detalle y lista
+      void qc.invalidateQueries({ queryKey: ['project', vars.projectId] })
+      void qc.invalidateQueries({ queryKey: ['scenes', vars.projectId] })
+    },
+    onError: (err) => toastProblem('Generar storyboard', err),
+  })
+}
+
+export function usePatchScene() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => api.patchScene(id, body),
+    onSuccess: (scene: SceneResponse) => {
+      toast.success('Escena actualizada')
+      void qc.invalidateQueries({ queryKey: ['scene', scene.id] })
+      void qc.invalidateQueries({ queryKey: ['scenes', scene.projectId] })
+    },
+    onError: (err) => toastProblem('Actualizar escena', err),
+  })
+}
+
+export function useDeleteScene() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (scene: SceneResponse) => api.deleteScene(scene.id),
+    onSuccess: (_data, scene) => {
+      toast.success(`Escena ${scene.orderIndex + 1} borrada`)
+      void qc.removeQueries({ queryKey: ['scene', scene.id] })
+      void qc.invalidateQueries({ queryKey: ['scenes', scene.projectId] })
+      void qc.invalidateQueries({ queryKey: ['project', scene.projectId] })
+    },
+    onError: (err) => toastProblem('Borrar escena', err),
+  })
+}
+
+export function useReorderScenes() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ projectId, sceneIds }: { projectId: string; sceneIds: string[] }) => api.reorderScenes(projectId, sceneIds),
+    onSuccess: (_data, vars) => {
+      toast.success('Orden actualizado')
+      void qc.invalidateQueries({ queryKey: ['scenes', vars.projectId] })
+    },
+    onError: (err) => toastProblem('Reordenar', err),
+  })
+}
+
+export function usePutSceneReferences() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ sceneId, items }: { sceneId: string; items: Array<{ referenceId: string; kind: 'subject' | 'environment' }> }) =>
+      api.putSceneReferences(sceneId, items),
+    onSuccess: (scene: SceneResponse) => {
+      toast.success('Referencias asignadas')
+      void qc.invalidateQueries({ queryKey: ['scene', scene.id] })
+      void qc.invalidateQueries({ queryKey: ['scenes', scene.projectId] })
+    },
+    onError: (err) => toastProblem('Asignar referencias', err),
+  })
+}
+
+function useSceneAssetMutation<T>(fn: (vars: T) => Promise<SceneResponse>, successLabel: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: (scene: SceneResponse) => {
+      toast.success(successLabel)
+      // matriz §5.2 + render desde lista: se invalidan detalle, lista y proyecto
+      // (el estado del proyecto avanza a in_production en el primer asset)
+      void qc.invalidateQueries({ queryKey: ['scene', scene.id] })
+      void qc.invalidateQueries({ queryKey: ['scenes', scene.projectId] })
+      void qc.invalidateQueries({ queryKey: ['project', scene.projectId] })
+    },
+    onError: (err) => toastProblem(successLabel, err),
+  })
+}
+
+export function useGenerateSceneImage() {
+  return useSceneAssetMutation<string>((id) => api.generateSceneImage(id, {}), 'Imagen generada con IA')
+}
+
+export function useUploadSceneImage() {
+  return useSceneAssetMutation<{ id: string; file: File }>(({ id, file }) => api.uploadSceneImage(id, file), 'Imagen subida')
+}
+
+export function useGenerateSceneAudio() {
+  return useSceneAssetMutation<{ id: string; voiceId?: string | null }>(({ id, voiceId }) => api.generateSceneAudio(id, { voiceId }), 'Narración generada')
+}
+
+export function useGenerateSceneVideo() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, providerOverride, durationSeconds }: { id: string; providerOverride?: string; durationSeconds?: number }) =>
+      api.generateSceneVideo(id, { providerOverride, durationSeconds }),
+    onSuccess: (scene: SceneResponse) => {
+      toast.info('Generación de vídeo en curso (202) — sondeando la escena…')
+      // el sondeo lo lleva useScene mientras status=video_pending
+      void qc.invalidateQueries({ queryKey: ['scene', scene.id] })
+      void qc.invalidateQueries({ queryKey: ['scenes', scene.projectId] })
+    },
+    onError: (err) => toastProblem('Generar vídeo', err),
+  })
+}
+
+export function useDeleteSceneAsset(kind: 'image' | 'video' | 'audio') {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (scene: SceneResponse) => api.deleteSceneAsset(scene.id, kind),
+    onSuccess: (_data, scene) => {
+      toast.success('Asset descartado')
+      void qc.invalidateQueries({ queryKey: ['scene', scene.id] })
+      void qc.invalidateQueries({ queryKey: ['scenes', scene.projectId] })
+    },
+    onError: (err) => toastProblem('Descartar asset', err),
+  })
+}
+
+export function useAssemble() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ projectId, body }: { projectId: string; body: { includeAudio?: boolean; musicVolume?: number } }) =>
+      api.assemble(projectId, body),
+    onSuccess: (job: AssemblyJobResponse, vars) => {
+      toast.info('Ensamblaje en curso (202) — sondea la lista de jobs')
+      void qc.invalidateQueries({ queryKey: ['assemblies', vars.projectId] })
+      void qc.invalidateQueries({ queryKey: ['project', vars.projectId] })
+    },
+    onError: (err) => toastProblem('Ensamblar', err),
+  })
+}
+
+export function useAudioQA() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ projectId, features }: { projectId: string; features: string[] }) => api.runAudioQA(projectId, { features }),
+    onSuccess: (job, vars) => {
+      toast.info(`QA de audio en curso (job ${job.id.slice(0, 8)}…)`)
+      void qc.invalidateQueries({ queryKey: ['assemblies', vars.projectId] })
+    },
+    onError: (err) => toastProblem('QA de audio', err),
+  })
+}
+
+export function useMusicMutation(kind: 'upload' | 'delete') {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ projectId, file }: { projectId: string; file?: File | null }): Promise<unknown> =>
+      kind === 'upload' && file !== undefined && file !== null
+        ? api.uploadMusic(projectId, file)
+        : api.deleteMusic(projectId),
+    onSuccess: (_data, vars) => {
+      toast.success(kind === 'upload' ? 'Música subida' : 'Música eliminada')
+      void qc.invalidateQueries({ queryKey: ['project', vars.projectId] })
+    },
+    onError: (err) => toastProblem(kind === 'upload' ? 'Subir música' : 'Quitar música', err),
+  })
+}
+
+export function useReferenceCrud() {
+  const qc = useQueryClient()
+  const create = useMutation({
+    mutationFn: api.createReference,
+    onSuccess: () => {
+      toast.success('Referencia creada')
+      void qc.invalidateQueries({ queryKey: ['references'] })
+    },
+    onError: (err) => toastProblem('Crear referencia', err),
+  })
+  const patch = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => api.patchReference(id, body),
+    onSuccess: (ref: ReferenceResponse) => {
+      toast.success('Referencia actualizada')
+      void qc.invalidateQueries({ queryKey: ['references'] })
+      void qc.invalidateQueries({ queryKey: ['reference', ref.id] })
+    },
+    onError: (err) => toastProblem('Actualizar referencia', err),
+  })
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteReference(id),
+    onSuccess: () => {
+      toast.success('Referencia borrada')
+      void qc.invalidateQueries({ queryKey: ['references'] })
+    },
+    onError: (err) => toastProblem('Borrar referencia', err),
+  })
+  const uploadImage = useMutation({
+    mutationFn: ({ id, file }: { id: string; file: File }) => api.uploadReferenceImage(id, file),
+    onSuccess: (ref: ReferenceResponse) => {
+      toast.success('Imagen subida')
+      void qc.invalidateQueries({ queryKey: ['references'] })
+      void qc.invalidateQueries({ queryKey: ['reference', ref.id] })
+    },
+    onError: (err) => toastProblem('Subir imagen', err),
+  })
+  const generateImage = useMutation({
+    mutationFn: ({ id, styleId }: { id: string; styleId?: string }) => api.generateReferenceImage(id, styleId),
+    onSuccess: (ref: ReferenceResponse) => {
+      toast.success('Imagen generada con IA')
+      void qc.invalidateQueries({ queryKey: ['references'] })
+      void qc.invalidateQueries({ queryKey: ['reference', ref.id] })
+    },
+    onError: (err) => toastProblem('Generar imagen', err),
+  })
+  const deleteImage = useMutation({
+    mutationFn: ({ id, imageId }: { id: string; imageId: string }) => api.deleteReferenceImage(id, imageId),
+    onSuccess: (_data, vars) => {
+      toast.success('Imagen eliminada')
+      void qc.invalidateQueries({ queryKey: ['references'] })
+      void qc.invalidateQueries({ queryKey: ['reference', vars.id] })
+    },
+    onError: (err) => toastProblem('Eliminar imagen', err),
+  })
+  const setPrimary = useMutation({
+    mutationFn: ({ id, imageId }: { id: string; imageId: string }) => api.setPrimaryReferenceImage(id, imageId),
+    onSuccess: (ref: ReferenceResponse) => {
+      toast.success('Imagen primaria actualizada')
+      void qc.invalidateQueries({ queryKey: ['references'] })
+      void qc.invalidateQueries({ queryKey: ['reference', ref.id] })
+    },
+    onError: (err) => toastProblem('Marcar primaria', err),
+  })
+  return { create, patch, remove, uploadImage, generateImage, deleteImage, setPrimary }
+}
+
+export function useStyleCrud() {
+  const qc = useQueryClient()
+  const create = useMutation({
+    mutationFn: api.createStyle,
+    onSuccess: () => {
+      toast.success('Estilo creado')
+      void qc.invalidateQueries({ queryKey: ['visual-styles'] })
+    },
+    onError: (err) => toastProblem('Crear estilo', err),
+  })
+  const patch = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => api.patchStyle(id, body),
+    onSuccess: () => {
+      toast.success('Estilo actualizado')
+      void qc.invalidateQueries({ queryKey: ['visual-styles'] })
+    },
+    onError: (err) => toastProblem('Actualizar estilo', err),
+  })
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteStyle(id),
+    onSuccess: () => {
+      toast.success('Estilo borrado')
+      void qc.invalidateQueries({ queryKey: ['visual-styles'] })
+    },
+    onError: (err) => toastProblem('Borrar estilo', err),
+  })
+  return { create, patch, remove }
+}
+
+export function useProviderConfigCrud() {
+  const qc = useQueryClient()
+  const upsert = useMutation({
+    mutationFn: api.upsertProviderConfig,
+    onSuccess: (row, vars) => {
+      toast.success(vars.providerName !== undefined ? `Config guardada (${vars.providerName})` : 'Config guardada')
+      void qc.invalidateQueries({ queryKey: ['provider-configs'] })
+    },
+    onError: (err) => toastProblem('Guardar config', err),
+  })
+  const patch = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => api.patchProviderConfig(id, body),
+    onSuccess: () => {
+      toast.success('Config actualizada')
+      void qc.invalidateQueries({ queryKey: ['provider-configs'] })
+    },
+    onError: (err) => toastProblem('Actualizar config', err),
+  })
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteProviderConfig(id),
+    onSuccess: () => {
+      toast.success('Config borrada')
+      void qc.invalidateQueries({ queryKey: ['provider-configs'] })
+    },
+    onError: (err) => toastProblem('Borrar config', err),
+  })
+  const test = useMutation({
+    mutationFn: (id: string) => api.testProviderConfig(id),
+    onSuccess: (result) => {
+      if (result.ok) {
+        toast.success(`Prueba OK (${result.latencyMs} ms)`)
+      } else {
+        toast.error(`Prueba fallida: ${result.error?.detail ?? 'sin detalle'} (${result.error?.code ?? '?'})`)
+      }
+      void qc.invalidateQueries({ queryKey: ['provider-configs'] })
+    },
+    onError: (err) => toastProblem('Probar config', err),
+  })
+  return { upsert, patch, remove, test }
+}
+
+export function usePatchProjectBatch() {
+  // helper de confort para settings del proyecto en el workspace
+  return usePatchProject()
+}
+
+export type ProjectSummaryPage = CursorPage<ProjectSummary>
