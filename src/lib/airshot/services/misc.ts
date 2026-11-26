@@ -162,6 +162,7 @@ export function runtimeConfig(): Record<string, unknown> {
       require_audio: airshotConfig.assembly.require_audio,
       music_default_volume: airshotConfig.assembly.music_default_volume,
       output_fps: airshotConfig.assembly.output_fps,
+      aspects: Object.keys(airshotConfig.assembly.aspect_ratios),
     },
     audio_qa: { enabled: airshotConfig.audio_qa.earshot.enabled },
     providers: {

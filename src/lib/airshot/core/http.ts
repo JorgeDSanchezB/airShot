@@ -14,6 +14,8 @@ import { AppError, problemResponse } from '@/lib/airshot/core/errors'
 import { parseJsonStrict } from '@/lib/airshot/core/json'
 import { enforceRateLimit } from '@/lib/airshot/core/rate-limit'
 import { logger } from '@/lib/airshot/core/logger'
+import { runWithTraceContext } from '@/lib/airshot/core/context'
+import { incCounter, normalizeRoute } from '@/lib/airshot/core/metrics'
 
 export type LocalUser = { id: string }
 
@@ -37,8 +39,9 @@ export function withRoute<Ctx>(
     const startedAt = Date.now()
     try {
       enforceRateLimit(req.headers, req.method)
-      const res = await handler(req, { traceId, user, ...seg })
+      const res = await runWithTraceContext({ traceId }, () => handler(req, { traceId, user, ...seg }))
       res.headers.set('x-trace-id', traceId)
+      incCounter('http_requests_total', { method: req.method, route: normalizeRoute(instance), status: String(res.status) })
       logger.debug('http.request', {
         traceId,
         method: req.method,
@@ -48,7 +51,9 @@ export function withRoute<Ctx>(
       })
       return res as Response
     } catch (err) {
-      return problemResponse(err, traceId, instance)
+      const res = problemResponse(err, traceId, instance)
+      incCounter('http_requests_total', { method: req.method, route: normalizeRoute(instance), status: String(res.status) })
+      return res
     }
   }
 }

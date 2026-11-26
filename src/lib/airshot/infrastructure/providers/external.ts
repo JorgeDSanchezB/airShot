@@ -17,6 +17,7 @@ import { join } from 'node:path'
 import type { ProviderEntry } from '@/lib/airshot/config/loader'
 import { AppError, ProviderAuthError, TransientProviderError } from '@/lib/airshot/core/errors'
 import { extractJsonLoose } from '@/lib/airshot/core/json'
+import { currentTraceId, traceparentOf } from '@/lib/airshot/core/context'
 import { makeTempDir, probeDuration } from '@/lib/airshot/infrastructure/ffmpeg'
 import type {
   ImageGenerationRequest,
@@ -36,6 +37,12 @@ import type {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
+}
+
+/** Propagación W3C cuando la llamada ocurre dentro de un request (traceId activo). */
+function traceHeaders(): Record<string, string> {
+  const traceId = currentTraceId()
+  return traceId === null ? {} : { traceparent: traceparentOf(traceId) }
 }
 
 type HttpArgs = {
@@ -58,6 +65,7 @@ async function httpJson<T>(args: HttpArgs): Promise<T> {
         headers: {
           accept: 'application/json',
           ...(args.body !== undefined ? { 'content-type': 'application/json' } : {}),
+          ...traceHeaders(),
           ...args.headers,
         },
         body: args.body !== undefined ? JSON.stringify(args.body) : undefined,
@@ -112,6 +120,7 @@ async function httpBinary(args: HttpArgs): Promise<Buffer> {
       headers: {
         accept: 'application/octet-stream',
         ...(args.body !== undefined ? { 'content-type': 'application/json' } : {}),
+        ...traceHeaders(),
         ...args.headers,
       },
       body: args.body !== undefined ? JSON.stringify(args.body) : undefined,
@@ -422,7 +431,12 @@ export class OpenAICompatLLMProvider implements LLMProvider {
     if (content.trim().length === 0) {
       throw new AppError('LLM_INVALID_OUTPUT', `${this.name}: contenido vacío`, { provider: this.name })
     }
-    const parsed = extractJsonLoose(content)
+    let parsed: unknown
+    try {
+      parsed = extractJsonLoose(content)
+    } catch (err) {
+      throw new AppError('LLM_INVALID_OUTPUT', `${this.name}: la salida no contiene JSON válido (${err instanceof Error ? err.message : String(err)})`, { provider: this.name })
+    }
     if (!req.validate(parsed)) {
       throw new AppError('LLM_INVALID_OUTPUT', `${this.name}: la salida no supera el esquema (los reintentos cubrieron solo fallos de red)`, { provider: this.name })
     }

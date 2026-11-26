@@ -90,6 +90,15 @@ export const AppConfigSchema = z.object({
     audio_bitrate_kbps: z.number().int().positive(),
     music_default_volume: z.number(),
     music_fade_out_seconds: z.number(),
+    aspect_ratios: z.record(z.string(), z.tuple([z.number().int().positive(), z.number().int().positive()])),
+    subtitles: z.object({
+      font_size: z.number().int().positive(),
+      margin_v: z.number().int().min(0),
+    }),
+    music_ducking: z.object({
+      threshold: z.number().positive(),
+      ratio: z.number().min(1),
+    }),
   }),
   storage: z.object({
     root: z.string(),

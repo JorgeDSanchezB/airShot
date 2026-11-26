@@ -29,6 +29,9 @@ jobs:
       - name: Generar Prisma Client
         run: bunx prisma generate
 
+      - name: Instalar FFmpeg (golden path de ensamblaje)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       - name: Lint
         run: bun run lint
 

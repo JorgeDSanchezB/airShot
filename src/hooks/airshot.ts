@@ -316,14 +316,39 @@ export function useDeleteSceneAsset(kind: 'image' | 'video' | 'audio') {
 export function useAssemble() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ projectId, body }: { projectId: string; body: { includeAudio?: boolean; musicVolume?: number } }) =>
-      api.assemble(projectId, body),
+    mutationFn: ({ projectId, body }: {
+      projectId: string
+      body: { includeAudio?: boolean; musicVolume?: number; aspect?: string; subtitles?: 'none' | 'srt' | 'burn'; duckMusic?: boolean; coverSceneId?: string | null }
+    }) => api.assemble(projectId, body),
     onSuccess: (job: AssemblyJobResponse, vars) => {
       toast.info('Ensamblaje en curso (202) — sondea la lista de jobs')
       void qc.invalidateQueries({ queryKey: ['assemblies', vars.projectId] })
       void qc.invalidateQueries({ queryKey: ['project', vars.projectId] })
     },
     onError: (err) => toastProblem('Ensamblar', err),
+  })
+}
+
+export function useRetryAssembly() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (job: { id: string; projectId: string }) => api.retryAssembly(job.id),
+    onSuccess: (job: AssemblyJobResponse) => {
+      toast.info(`Reintento lanzado (job ${job.id.slice(0, 8)}…)`)
+      void qc.invalidateQueries({ queryKey: ['assemblies', job.projectId] })
+      void qc.invalidateQueries({ queryKey: ['project', job.projectId] })
+      void qc.invalidateQueries({ queryKey: ['ops-summary'] })
+    },
+    onError: (err) => toastProblem('Reintentar job', err),
+  })
+}
+
+export function useOpsSummary(enabled: boolean) {
+  return useQuery({
+    queryKey: ['ops-summary'],
+    queryFn: api.getOpsSummary,
+    enabled,
+    refetchInterval: 15_000,
   })
 }
 

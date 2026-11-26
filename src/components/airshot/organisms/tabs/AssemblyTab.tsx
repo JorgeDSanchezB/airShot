@@ -5,17 +5,18 @@
 // historial con salida descargable, y QA de audio (Earshot, opt-in por config).
 
 import { useRef, useState } from 'react'
-import { Download, Film, Music, Play, Trash2, Wand2 } from 'lucide-react'
+import { Download, Film, Image as ImageIcon, Music, Play, RotateCcw, Trash2, Wand2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
 import { StatusChip } from '@/components/airshot/atoms'
-import { useAssemble, useAssemblies, useAudioQA, useMusicMutation, usePatchProject, useRuntimeConfig, useScenes } from '@/hooks/airshot'
+import { useAssemble, useAssemblies, useAudioQA, useMusicMutation, usePatchProject, useRetryAssembly, useRuntimeConfig, useScenes } from '@/hooks/airshot'
 import type { ProjectResponse } from '@/lib/airshot-client/types'
 
 export function AssemblyTab({ project }: { project: ProjectResponse }) {
@@ -23,6 +24,7 @@ export function AssemblyTab({ project }: { project: ProjectResponse }) {
   const scenesQuery = useScenes(project.id)
   const assemblies = useAssemblies(project.id)
   const assemble = useAssemble()
+  const retry = useRetryAssembly()
   const audioQA = useAudioQA()
   const musicUpload = useMusicMutation('upload')
   const musicDelete = useMusicMutation('delete')
@@ -31,14 +33,20 @@ export function AssemblyTab({ project }: { project: ProjectResponse }) {
   const [includeAudio, setIncludeAudio] = useState(true)
   const [volume, setVolume] = useState(project.musicVolume)
   const [qaFeatures, setQaFeatures] = useState<string[]>(['loudness', 'sync'])
+  const [aspect, setAspect] = useState<string | null>(null)
+  const [subtitlesMode, setSubtitlesMode] = useState<'none' | 'srt' | 'burn'>('none')
+  const [duckMusic, setDuckMusic] = useState(false)
+  const [coverSceneId, setCoverSceneId] = useState<string>('none')
 
   const scenes = scenesQuery.data?.pages.flatMap((page) => page.items) ?? []
   const jobs = assemblies.data?.pages.flatMap((page) => page.items) ?? []
+  const aspectOptions = runtime.data?.assembly.aspects ?? []
+  const aspectValue = aspect ?? aspectOptions[0] ?? ''
   const missingVideo = scenes.filter((s) => s.videoClipPath === null).length
   const missingAudio = includeAudio && (runtime.data?.assembly.require_audio ?? true)
     ? scenes.filter((s) => s.audioPath === null).length
     : 0
-  const canAssemble = scenes.length > 0 && missingVideo === 0 && missingAudio === 0
+  const canAssemble = scenes.length > 0 && missingVideo === 0 && missingAudio === 0 && aspectValue.length > 0
   const earshotEnabled = runtime.data?.audio_qa.enabled ?? false
   // salida más reciente del ensamblaje (presentación: reproductor final)
   const latestOutput = jobs.find((job) => job.jobType === 'assembly' && job.outputUrl !== null)?.outputUrl ?? null
@@ -123,12 +131,71 @@ export function AssemblyTab({ project }: { project: ProjectResponse }) {
           <p className="font-mono text-[10px] text-muted-foreground">
             concat de clips normalizados ({runtime.data?.assembly.output_fps ?? 24} fps) + mezcla narración/música con fade out.
           </p>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              formato
+              <Select value={aspectValue} onValueChange={setAspect}>
+                <SelectTrigger className="h-7 w-24 text-xs" aria-label="Proporción del vídeo final"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {aspectOptions.map((option) => (
+                    <SelectItem key={option} value={option}>{option}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              subtítulos
+              <Select value={subtitlesMode} onValueChange={(value) => setSubtitlesMode(value as 'none' | 'srt' | 'burn')}>
+                <SelectTrigger className="h-7 w-32 text-xs" aria-label="Modo de subtítulos"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">sin subtítulos</SelectItem>
+                  <SelectItem value="srt">SRT (sidecar)</SelectItem>
+                  <SelectItem value="burn">incrustados</SelectItem>
+                </SelectContent>
+              </Select>
+            </label>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              portada
+              <Select value={coverSceneId} onValueChange={setCoverSceneId}>
+                <SelectTrigger className="h-7 w-32 text-xs" aria-label="Escena de portada"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">sin portada</SelectItem>
+                  {scenes.map((scene) => (
+                    <SelectItem key={scene.id} value={scene.id}>escena {scene.orderIndex + 1}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              ducking
+              <Switch
+                checked={duckMusic}
+                onCheckedChange={setDuckMusic}
+                disabled={project.musicAssetKey === null || !includeAudio}
+                aria-label="Bajar la música bajo la narración (ducking)"
+              />
+            </label>
+          </div>
           {!canAssemble && (
             <p className="text-xs text-amber-600 dark:text-amber-400">
               Pendiente para ensamblar: {missingVideo} clip(s) de vídeo{missingAudio > 0 ? ` y ${missingAudio} narración(es) (require_audio=${String(runtime.data?.assembly.require_audio ?? true)})` : ''}.
             </p>
           )}
-          <Button className="gap-1 shadow-[0_8px_24px_-8px] shadow-primary/40" disabled={!canAssemble || assemble.isPending} onClick={() => void assemble.mutateAsync({ projectId: project.id, body: { includeAudio, musicVolume: volume } })}>
+          <Button
+            className="gap-1 shadow-[0_8px_24px_-8px] shadow-primary/40"
+            disabled={!canAssemble || assemble.isPending}
+            onClick={() => void assemble.mutateAsync({
+              projectId: project.id,
+              body: {
+                includeAudio,
+                musicVolume: volume,
+                aspect: aspectValue,
+                subtitles: subtitlesMode,
+                duckMusic,
+                coverSceneId: coverSceneId === 'none' ? null : coverSceneId,
+              },
+            })}
+          >
             <Play className="size-4" /> Ensamblar vídeo final
           </Button>
           {latestOutput !== null && (
@@ -196,8 +263,29 @@ export function AssemblyTab({ project }: { project: ProjectResponse }) {
                     {new Date(job.createdAt).toLocaleString('es-EC', { dateStyle: 'short', timeStyle: 'medium' })}
                   </span>
                 </div>
+                {(job.status === 'pending' || job.status === 'running') && job.progress !== null && (
+                  <div className="mt-1.5 space-y-1">
+                    <div className="flex items-center justify-between font-mono text-[10px] text-muted-foreground">
+                      <span>{job.progress.stage} · {job.progress.done}/{job.progress.total}</span>
+                      <span>{job.progress.total > 0 ? Math.round((job.progress.done / job.progress.total) * 100) : 0}%</span>
+                    </div>
+                    <div className="h-1 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label={`Progreso del job (${job.progress.stage})`} aria-valuenow={job.progress.done} aria-valuemax={job.progress.total}>
+                      <div
+                        className="h-full rounded-full bg-primary transition-all"
+                        style={{ width: `${job.progress.total > 0 ? Math.min(100, (job.progress.done / job.progress.total) * 100) : 0}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
                 {job.errorMessage !== null && (
-                  <p className="mt-1.5 font-mono text-[10px] text-destructive">{job.errorMessage.code}: {job.errorMessage.detail}</p>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                    <p className="font-mono text-[10px] text-destructive">{job.errorMessage.code}: {job.errorMessage.detail}</p>
+                    {job.status === 'failed' && (
+                      <Button size="sm" variant="outline" className="h-6 gap-1 px-2 text-[10px]" disabled={retry.isPending} onClick={() => void retry.mutateAsync(job)}>
+                        <RotateCcw className="size-3" /> Reintentar
+                      </Button>
+                    )}
+                  </div>
                 )}
                 {job.outputUrl !== null && (
                   <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -208,6 +296,16 @@ export function AssemblyTab({ project }: { project: ProjectResponse }) {
                     ) : (
                       <a href={job.outputUrl} download className="inline-flex items-center gap-1 text-xs underline underline-offset-2" target="_blank" rel="noreferrer">
                         <Download className="size-3" /> Descargar reporte JSON
+                      </a>
+                    )}
+                    {job.subtitlesUrl !== null && (
+                      <a href={job.subtitlesUrl} download className="inline-flex items-center gap-1 text-xs underline underline-offset-2" target="_blank" rel="noreferrer">
+                        <Download className="size-3" /> subtítulos.srt
+                      </a>
+                    )}
+                    {job.thumbnailUrl !== null && (
+                      <a href={job.thumbnailUrl} download className="inline-flex items-center gap-1 text-xs underline underline-offset-2" target="_blank" rel="noreferrer">
+                        <ImageIcon className="size-3" /> portada.jpg
                       </a>
                     )}
                     <span className="max-w-full truncate font-mono text-[10px] text-muted-foreground" title={job.outputUrl}>{job.outputUrl}</span>

@@ -147,6 +147,9 @@ model AssemblyJob {
   jobType      String    @default("assembly")
   status       String    @default("pending")
   outputPath   String?
+  subtitlesPath String?
+  thumbnailPath String?
+  progress     String?
   report       String?
   errorMessage String?
   params       String    @default("{}")

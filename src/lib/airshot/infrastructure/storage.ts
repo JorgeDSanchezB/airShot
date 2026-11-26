@@ -96,6 +96,14 @@ export class StorageService {
     return `outputs/projects/${projectId}/assemblies/${jobId}/final.mp4`
   }
 
+  assemblySubtitles(projectId: string, jobId: string): string {
+    return `outputs/projects/${projectId}/assemblies/${jobId}/subtitles.srt`
+  }
+
+  assemblyThumbnail(projectId: string, jobId: string): string {
+    return `outputs/projects/${projectId}/assemblies/${jobId}/cover.jpg`
+  }
+
   reportOutput(projectId: string, jobId: string): string {
     return `outputs/projects/${projectId}/${airshotConfig.audio_qa.earshot.report_dir}/${jobId}.json`
   }

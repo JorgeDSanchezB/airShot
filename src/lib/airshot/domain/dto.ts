@@ -247,6 +247,8 @@ export function toProviderConfigResponse(row: ProviderConfig, apiKeyMasked: stri
 
 // ---------- AssemblyJob ----------
 
+export type AssemblyProgressDto = { stage: string; done: number; total: number }
+
 export type AssemblyJobResponseDto = {
   id: string
   projectId: string
@@ -254,6 +256,9 @@ export type AssemblyJobResponseDto = {
   status: string
   outputPath: string | null
   outputUrl: string | null
+  subtitlesUrl: string | null
+  thumbnailUrl: string | null
+  progress: AssemblyProgressDto | null
   report: Record<string, unknown> | null
   errorMessage: { code: string; title: string; detail: string; retryable: boolean } | null
   params: Record<string, unknown>
@@ -270,6 +275,9 @@ export function toAssemblyJobResponse(row: AssemblyJob): AssemblyJobResponseDto 
     status: row.status,
     outputPath: row.outputPath,
     outputUrl: storage.resolveUrl(row.outputPath),
+    subtitlesUrl: storage.resolveUrl(row.subtitlesPath),
+    thumbnailUrl: storage.resolveUrl(row.thumbnailPath),
+    progress: parseJsonLoose<AssemblyProgressDto | null>(row.progress, null),
     report: parseJsonLoose<Record<string, unknown> | null>(row.report, null),
     errorMessage: parseJsonLoose<AssemblyJobResponseDto['errorMessage']>(row.errorMessage, null),
     params: parseJsonLoose<Record<string, unknown>>(row.params, {}),

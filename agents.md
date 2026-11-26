@@ -133,8 +133,38 @@ Este archivo es la memoria de trabajo del repositorio AirShot. Se actualiza **al
 - **Verificación previa al commit**: lint 0 errores (1 warning preexistente VirtualList), tsc limpio, 115 tests Vitest, Playwright smoke verde, `next build` standalone OK, smoke curl completo (401→unlock→200, 422, deep health, media 206/304/416/attachment, logout→401).
 - **Estado del loop**: CI de GitHub Actions queda armado para correr en el push (lint/typecheck/test/build + e2e). Sigue pendiente del usuario rotar el token de GitHub compartido en el chat.
 
+### [2026-11-26] Tarea T21 — Tests de contrato, jobs reanudables, postproducción y operaciones
+
+- **Qué se hizo**: implementación de 4 de las 5 ideas de mejora propuestas tras T20 (la idea 2 —presupuesto/coste— queda en backlog, abajo).
+- **I1 Tests de contrato + camino dorado**: `tests/integration/providers-contract.test.ts` levanta un `node:http` local real y fija el contrato wire de los adaptadores externos: TTS OpenAI-compat (POST/JSON/bearer, bytes WAV + duración, 401→PROVIDER_AUTH), LLM (JSON validado, `temperature` de entry, salida no-JSON→LLM_INVALID_OUTPUT, 5xx con `max_retries`→PROVIDER_UNAVAILABLE), imagen (b64 y url→GET binario) y Veo (key en `x-goog-api-key`, nunca query; submit→poll→download). Añadido caso de `traceparent` W3C saliente. `tests/integration/assembly-golden-path.test.ts` ejecuta el ensamblaje REAL con FFmpeg (clips/narración/música sintéticos): mp4 9:16 (720×1280), SRT con tiempos acumulados, portada JPEG, progreso `{stage:'done'}`, proyecto `assembled`, segunda ejecución con caché y reintento de un job failed con `aspect: 1:1` (720×720); se omite si falta ffmpeg/ffprobe. **Bug real encontrado y corregido por estos tests**: `completeStructured` dejaba escapar el `SyntaxError` de `extractJsonLoose` (ahora se clasifica `LLM_INVALID_OUTPUT`).
+- **I3 Jobs persistentes/reanudables**: migración `20261126000200_job_progress_postproduction` (`progress`, `subtitlesPath`, `thumbnailPath` en `AssemblyJob`, aplicada con `migrate deploy`); `assembleProject` emite `onProgress` por etapa (normalize/concat/narration/music/subtitles/cover/mux) y `runAssemblyJob` lo persiste; caché de normalización `cache/assembly/<sha256(clip|mtime|dims|fps|codec|crf|preset)>.mp4` que reutiliza clips válidos al reintentar; `retryAssemblyJob` + `POST /api/v1/assemblies/{jobId}/retry` (job nuevo con los mismos parámetros; assembly y audio_qa; 409 si no está failed); UI: barra de progreso y botón Reintentar en el historial de jobs.
+- **I4 Postproducción**: config nueva (`assembly.aspect_ratios` 16:9/9:16/1:1, `subtitles.font_size/margin_v`, `music_ducking.threshold/ratio`) validada en el loader; `dimsFor` (lado corto 720/1080, dimensiones pares), `buildSrt` acumulado, sidecar SRT y burn-in con filtro `subtitles`+`force_style`, portada JPEG del primer fotograma (`coverSceneId`), ducking con `sidechaincompress` sobre la narración; `AssembleRequest` amplía `aspect` (enum desde config), `subtitles`, `duckMusic`, `coverSceneId`; `GET /config` expone `assembly.aspects`; DTO/cliente con `progress`, `subtitlesUrl`, `thumbnailUrl`; tab Ensamblaje con selectores de formato/subtítulos/portada, switch de ducking, enlaces a subtitles.srt y portada.jpg.
+- **I5 Métricas y operaciones**: `core/context.ts` (AsyncLocalStorage) + `core/metrics.ts` (contadores/summaries Prometheus sin dependencias); `withRoute` registra `http_requests_total` con rutas normalizadas; los adaptadores externos propagan `traceparent` W3C; counters/duraciones para scene_video, assembly y audio_qa; `GET /api/v1/metrics` (contadores + gauges de cola/disco/uptime/RSS/runners) y `GET /api/v1/ops/summary` (cola, fallos 24 h con código, escenas pending, disco, fallidos recientes); panel **Sistema → Operaciones** con reintento directo.
+- **Verificación ejecutada**: `lint` 0 errores (1 warning preexistente de VirtualList), `tsc` limpio, **136 tests** en 17 archivos (incluye 11 nuevos de contrato/golden path y 8 unit de métricas/contexto), `next build` standalone OK; curl real contra standalone 3100: `/metrics` (gauges + contador HTTP con `:id`), `/ops/summary` (fallo histórico real con código), retry de job inexistente → 404 problem+json con traceId, `/config` con `aspects`; Playwright smoke verde. CI instala FFmpeg antes de los tests.
+- **Artefactos**: tests/integration/{providers-contract,assembly-golden-path}.test.ts, tests/unit/{metrics,context}.test.ts, src/lib/airshot/core/{context,metrics}.ts, src/app/api/v1/{metrics,ops/summary,assemblies/[jobId]/retry}/route.ts, infraestructura (assembly/storage/external), servicios (jobs/misc), schemas/dto, cliente+hooks, AssemblyTab/SettingsView, config.yaml, schema.prisma + migración, ci.yml, README.
+
+## Backlog
+
+### Idea 2 (PENDIENTE, deliberadamente no implementada) — Presupuesto y coste por generación
+
+Se deja **para cuando se use IA de pago**: no se implementa ahora porque los proveedores
+locales/sandbox no facturan y cualquier cifra sería inventada. Alcance previsto (sin
+comprometer diseño definitivo):
+
+- Precios por proveedor/modelo y unidad (segundos de vídeo, caracteres TTS, imágenes) en
+  `providers.yaml` o tabla dedicada, nunca hardcodeados.
+- Registro por operación: proveedor, modelo, unidades reales (duración efectiva, chars,
+  nº de imágenes), coste calculado y `jobId`/`sceneId` como trazabilidad.
+- Presupuesto por proyecto y global (config), con `STATE_CONFLICT`/aviso antes de excederlo
+  y resumen agregado (por proyecto y por ventana temporal) en el panel de operaciones.
+- API: `GET /api/v1/usage?projectId&from&to` (+ export CSV); campos de coste opcionales en
+  los DTO de jobs, sin romper contratos existentes.
+- Tests: cálculo por unidad con precios de fixture, rechazo por presupuesto y no-doble-cobro
+  en reintentos (un reintento solo suma si el proveedor factura de nuevo).
+
 ## Estado actual
 
+- **T21 implementada y verificada** (tests de contrato, jobs reanudables con progreso, postproducción 16:9/9:16/1:1 + SRT/burn/portada/ducking, métricas Prometheus + ops summary, traceparent W3C): lint/tsc limpios, **136 tests** en 17 archivos, gold path FFmpeg real, build standalone y smoke Playwright verdes. **Idea 2 (presupuesto/coste) queda en Backlog** hasta usar IA de pago.
 - **Fase 6 IMPLEMENTADA y verificada** en el runtime del sandbox (Next.js 16 + TypeScript + Prisma/SQLite — mapeo y desviaciones en [ADR-016](docs/decisions/ADR-016-adaptacion-sandbox-nextjs.md)): pipeline completo historia→storyboard→imagen/vídeo/narración→ensamblaje FFmpeg extremo a extremo con salida real verificada (final.mp4 18 s h264+AAC).
 - **Visual «tungsteno» ([ADR-017](docs/decisions/ADR-017-identidad-visual-tungsteno.md))**: frontend pulido y verificado E2E en ambos temas; jurado VLM estilo Awwwards: ronda 1 6.8/10 (14 defectos corregidos) → ronda 2 **8.4/10 «SÍ listo para portfolio»**; defectos residuales declarados honestamente (grid con 1 proyecto real, verde semántico de estado, micro-contraste del footer).
 - **Árbitro adversarial**: backend sobre el LISTÓN — ronda 1 RECHAZADO (B1/M1/M2) → correcciones aplicadas y re-verificadas (tests curl/browser/ffprobe en T16); visual — 2 rondas VLM + agent-browser E2E (flujo projects→workspace→4 tabs→library/styles/settings, dark/light, móvil 390 px, footer sticky).

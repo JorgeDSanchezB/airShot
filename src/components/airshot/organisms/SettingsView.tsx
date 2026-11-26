@@ -7,14 +7,14 @@
 
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { Activity, AudioWaveform, BrainCircuit, Image, KeyRound, Mic, Plus, Trash2, Video } from 'lucide-react'
+import { Activity, AudioWaveform, BrainCircuit, Image, KeyRound, Mic, Plus, RotateCcw, Trash2, Video } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { StatusChip } from '@/components/airshot/atoms'
 import { ProviderConfigFormDialog } from '@/components/airshot/molecules/forms'
-import { useHealthDeep, useProviderConfigCrud, useProviderConfigs, useRuntimeConfig } from '@/hooks/airshot'
+import { useHealthDeep, useOpsSummary, useProviderConfigCrud, useProviderConfigs, useRetryAssembly, useRuntimeConfig } from '@/hooks/airshot'
 import type { ProviderConfigResponse } from '@/lib/airshot-client/types'
 
 const PROVIDER_TYPES = ['video', 'tts', 'llm', 'image', 'audio_qa'] as const
@@ -43,6 +43,8 @@ export function SettingsView() {
   const configs = useProviderConfigs(typeFilter !== '__all' ? typeFilter : undefined)
   const crud = useProviderConfigCrud()
   const health = useHealthDeep(true)
+  const ops = useOpsSummary(true)
+  const retry = useRetryAssembly()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [formNonce, setFormNonce] = useState(0)
   const [editing, setEditing] = useState<ProviderConfigResponse | null>(null)
@@ -150,6 +152,47 @@ export function SettingsView() {
                   <span className="truncate text-muted-foreground">{check.detail}</span>
                 </div>
               ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="p-0">
+        <CardContent className="space-y-3 p-5">
+          <div>
+            <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-foreground/70">cola · fallos · disco · GET /ops/summary</p>
+            <h3 className="mt-1.5 font-display text-base font-semibold tracking-tight">Operaciones</h3>
+          </div>
+          {ops.isLoading && <p className="text-xs text-muted-foreground">Cargando…</p>}
+          {ops.data !== undefined && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs md:grid-cols-4">
+                <p className="rounded-md px-2 py-1.5 transition-colors hover:bg-secondary/50"><span className="font-mono">uptime:</span> {Math.floor(ops.data.uptimeSeconds / 60)} min</p>
+                <p className="rounded-md px-2 py-1.5 transition-colors hover:bg-secondary/50"><span className="font-mono">jobs:</span> {ops.data.jobs.pending} · {ops.data.jobs.running} · {ops.data.jobs.failed24h} failed/24h</p>
+                <p className="rounded-md px-2 py-1.5 transition-colors hover:bg-secondary/50"><span className="font-mono">escenas *_pending:</span> {ops.data.scenes.pending}</p>
+                <p className="rounded-md px-2 py-1.5 transition-colors hover:bg-secondary/50">
+                  <span className="font-mono">disco:</span>{' '}
+                  {ops.data.disk !== null ? `${(ops.data.disk.freeBytes / 1024 ** 3).toFixed(1)} / ${(ops.data.disk.totalBytes / 1024 ** 3).toFixed(1)} GB` : 'n/d'}
+                </p>
+              </div>
+              {ops.data.recentFailed.length === 0 ? (
+                <p className="font-mono text-[10px] text-muted-foreground">Sin jobs fallidos recientes.</p>
+              ) : (
+                <div className="space-y-1">
+                  <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-foreground/70">fallidos recientes</p>
+                  {ops.data.recentFailed.map((job) => (
+                    <div key={job.id} className="flex flex-wrap items-center gap-2 rounded-md border border-dashed px-2 py-1.5 text-xs">
+                      <StatusChip status={job.status} />
+                      <Badge variant="outline" className="font-mono text-[10px] uppercase">{job.jobType === 'assembly' ? 'ensamblaje' : 'audio-qa'}</Badge>
+                      <span className="font-mono text-[10px] text-destructive">{job.code ?? 'sin código'}</span>
+                      <span className="slug font-mono text-[10px] text-muted-foreground">{job.id.slice(0, 8)}… · {new Date(job.createdAt).toLocaleString('es-EC', { dateStyle: 'short', timeStyle: 'short' })}</span>
+                      <Button size="sm" variant="outline" className="ml-auto h-6 gap-1 px-2 text-[10px]" disabled={retry.isPending} onClick={() => void retry.mutateAsync(job)}>
+                        <RotateCcw className="size-3" /> Reintentar
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </CardContent>

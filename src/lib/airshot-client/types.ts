@@ -130,6 +130,8 @@ export type ProviderConfigResponse = {
   updatedAt: string
 }
 
+export type AssemblyProgress = { stage: string; done: number; total: number }
+
 export type AssemblyJobResponse = {
   id: string
   projectId: string
@@ -137,12 +139,23 @@ export type AssemblyJobResponse = {
   status: string
   outputPath: string | null
   outputUrl: string | null
+  subtitlesUrl: string | null
+  thumbnailUrl: string | null
+  progress: AssemblyProgress | null
   report: Record<string, unknown> | null
   errorMessage: { code: string; title: string; detail: string; retryable: boolean } | null
   params: Record<string, unknown>
   startedAt: string | null
   finishedAt: string | null
   createdAt: string
+}
+
+export type OpsSummary = {
+  uptimeSeconds: number
+  jobs: { pending: number; running: number; failed24h: number }
+  scenes: { pending: number }
+  disk: { freeBytes: number; totalBytes: number } | null
+  recentFailed: Array<{ id: string; projectId: string; jobType: string; status: string; code: string | null; createdAt: string }>
 }
 
 export type VoiceInfo = {
@@ -181,7 +194,7 @@ export type RuntimeConfig = {
     music: { max_bytes: number; allowed_mime: string[] }
   }
   media: { cache_max_age_seconds: number }
-  assembly: { require_audio: boolean; music_default_volume: number; output_fps: number }
+  assembly: { require_audio: boolean; music_default_volume: number; output_fps: number; aspects: string[] }
   audio_qa: { enabled: boolean }
   providers: {
     video: string[]

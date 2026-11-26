@@ -17,7 +17,14 @@ export const POST = withRoute<Ctx>(async (req: NextRequest, { params }) => {
   if (project === null) throw new AppError('NOT_FOUND', `proyecto ${id} no encontrado`, { projectId: id })
   const includeAudio = body.includeAudio ?? true
   const musicVolume = body.musicVolume ?? project.musicVolume ?? airshotConfig.assembly.music_default_volume
-  const jobId = await createAssemblyJob(id, { includeAudio, musicVolume })
+  const jobId = await createAssemblyJob(id, {
+    includeAudio,
+    musicVolume,
+    aspect: body.aspect ?? '16:9',
+    subtitles: body.subtitles ?? 'none',
+    duckMusic: body.duckMusic ?? false,
+    coverSceneId: body.coverSceneId ?? null,
+  })
   const job = await db.assemblyJob.findUniqueOrThrow({ where: { id: jobId } })
   return okJson(toAssemblyJobResponse(job), 202)
 })

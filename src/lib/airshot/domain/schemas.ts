@@ -60,9 +60,16 @@ export const StoryboardRequest = z.strictObject({
     .optional(),
 })
 
+// las proporciones válidas salen de config (cero hardcoding)
+const aspectKey = z.enum(Object.keys(airshotConfig.assembly.aspect_ratios) as [string, ...string[]])
+
 export const AssembleRequest = z.strictObject({
   includeAudio: z.boolean().optional(),
   musicVolume: z.number().positive().max(1).optional(),
+  aspect: aspectKey.optional(),
+  subtitles: z.enum(['none', 'srt', 'burn']).optional(),
+  duckMusic: z.boolean().optional(),
+  coverSceneId: uuidField.nullable().optional(),
 })
 
 export const AudioQARequest = z.strictObject({

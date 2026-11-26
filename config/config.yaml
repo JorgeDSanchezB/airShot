@@ -76,6 +76,16 @@ assembly:
   audio_bitrate_kbps: 192
   music_default_volume: 0.25
   music_fade_out_seconds: 2.0
+  aspect_ratios:                       # dimensiones = lado corto fijo por resolución (720p/1080p)
+    "16:9": [16, 9]
+    "9:16": [9, 16]
+    "1:1": [1, 1]
+  subtitles:                           # burn-in opcional (srt sidecar siempre disponible)
+    font_size: 22
+    margin_v: 24
+  music_ducking:                       # sidechaincompress cuando hay narración + música
+    threshold: 0.05
+    ratio: 6
 
 storage:
   root: "./data"                       # uploads/ y outputs/ bajo la raíz (§3.5)

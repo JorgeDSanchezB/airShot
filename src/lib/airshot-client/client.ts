@@ -7,6 +7,7 @@ import type {
   AssemblyJobResponse,
   CursorPage,
   HealthDeep,
+  OpsSummary,
   ProjectResponse,
   ProjectSummary,
   ProviderConfigResponse,
@@ -100,8 +101,13 @@ export const api = {
 
   deleteMusic: (id: string) => apiFetch<void>(`/projects/${id}/music`, { method: 'DELETE' }),
 
-  assemble: (id: string, body: { includeAudio?: boolean; musicVolume?: number }) =>
+  assemble: (id: string, body: { includeAudio?: boolean; musicVolume?: number; aspect?: string; subtitles?: 'none' | 'srt' | 'burn'; duckMusic?: boolean; coverSceneId?: string | null }) =>
     apiFetch<AssemblyJobResponse>(`/projects/${id}/assemble`, { method: 'POST', body: JSON.stringify(body) }),
+
+  retryAssembly: (jobId: string) =>
+    apiFetch<AssemblyJobResponse>(`/assemblies/${jobId}/retry`, { method: 'POST', body: JSON.stringify({}) }),
+
+  getOpsSummary: () => apiFetch<OpsSummary>('/ops/summary'),
 
   runAudioQA: (id: string, body: { features: string[]; generateSfx?: boolean }) =>
     apiFetch<AssemblyJobResponse>(`/projects/${id}/audio-qa`, { method: 'POST', body: JSON.stringify(body) }),

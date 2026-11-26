@@ -11,6 +11,8 @@ import { AppError, type Problem } from '@/lib/airshot/core/errors'
 import { logger } from '@/lib/airshot/core/logger'
 import { storage } from '@/lib/airshot/infrastructure/storage'
 import { assembleProject } from '@/lib/airshot/infrastructure/assembly'
+import type { SubtitleMode } from '@/lib/airshot/infrastructure/assembly'
+import { incCounter, observeDurationSeconds } from '@/lib/airshot/core/metrics'
 import { getAudioQAProvider, getVideoProvider, withProviderConcurrency } from '@/lib/airshot/infrastructure/providers/factory'
 import type { VideoGenerationRequest } from '@/lib/airshot/infrastructure/providers/types'
 
@@ -25,6 +27,10 @@ export function isSceneJobActive(sceneId: string): boolean {
 
 export function isAssemblyJobActive(jobId: string): boolean {
   return activeAssemblyJobs.has(jobId)
+}
+
+export function listActiveAssemblyJobs(): string[] {
+  return [...activeAssemblyJobs]
 }
 
 function errorSnapshot(err: unknown): Problem {
@@ -135,9 +141,13 @@ async function runSceneVideoJob(job: SceneVideoJob): Promise<void> {
       ms: Date.now() - startedAt,
       effectiveSeconds: result.effectiveDurationSeconds,
     })
+    incCounter('jobs_total', { type: 'scene_video', status: 'completed' })
+    observeDurationSeconds('job_duration_seconds', (Date.now() - startedAt) / 1000, { type: 'scene_video' })
   } catch (err) {
     const problem = errorSnapshot(err)
     logger.error('job.scene_video.failed', { sceneId: job.sceneId, provider: job.providerName, code: problem.code, detail: problem.detail, ms: Date.now() - startedAt })
+    incCounter('jobs_total', { type: 'scene_video', status: 'failed' })
+    observeDurationSeconds('job_duration_seconds', (Date.now() - startedAt) / 1000, { type: 'scene_video' })
     await db.scene
       .update({ where: { id: job.sceneId }, data: { status: 'failed', lastError: problemToColumn(problem) } })
       .catch((dbErr: unknown) => logger.error('job.scene_video.persist_failed', { sceneId: job.sceneId, error: dbErr }))
@@ -146,15 +156,30 @@ async function runSceneVideoJob(job: SceneVideoJob): Promise<void> {
 
 // ---------------------------------------------------------------- ensamblaje
 
+export type AssemblyOptions = {
+  includeAudio: boolean
+  musicVolume: number
+  aspect: string
+  subtitles: SubtitleMode
+  duckMusic: boolean
+  coverSceneId: string | null
+}
+
 export async function createAssemblyJob(
   projectId: string,
-  params: { includeAudio: boolean; musicVolume: number },
+  params: AssemblyOptions,
 ): Promise<string> {
   // B1: barrer huérfanos antiguos antes de contar «jobs en curso»
   await sweepOrphanJobs({ staleOnly: true })
   const project = await db.project.findUnique({ where: { id: projectId } })
   if (project === null) throw new AppError('NOT_FOUND', `proyecto ${projectId} no encontrado`, { projectId })
+  if (airshotConfig.assembly.aspect_ratios[params.aspect] === undefined) {
+    throw new AppError('VALIDATION_ERROR', `aspect "${params.aspect}" no está en assembly.aspect_ratios`, { field: 'aspect' })
+  }
   const scenes = await db.scene.findMany({ where: { projectId }, orderBy: { orderIndex: 'asc' } })
+  if (params.coverSceneId !== null && !scenes.some((s) => s.id === params.coverSceneId)) {
+    throw new AppError('VALIDATION_ERROR', `coverSceneId ${params.coverSceneId} no pertenece al proyecto`, { field: 'coverSceneId' })
+  }
   const incomplete = scenes.filter(
     (s) => s.videoClipPath === null || (params.includeAudio && airshotConfig.assembly.require_audio && s.audioPath === null),
   )
@@ -188,6 +213,10 @@ export async function createAssemblyJob(
           musicVolume: params.musicVolume,
           musicOriginalName: project.musicOriginalName,
           resolution: project.outputResolution,
+          aspect: params.aspect,
+          subtitles: params.subtitles,
+          duckMusic: params.duckMusic,
+          coverSceneId: params.coverSceneId,
           fps: airshotConfig.assembly.output_fps,
           codec: airshotConfig.assembly.video_codec,
           sceneIds: scenes.map((s) => s.id),
@@ -218,30 +247,57 @@ async function runAssemblyJob(jobId: string): Promise<void> {
   const scenes = await db.scene.findMany({ where: { projectId: job.projectId }, orderBy: { orderIndex: 'asc' } })
   if (project === null || scenes.length === 0) {
     logger.error('job.assembly.failed', { jobId, projectId: job.projectId, code: 'NOT_FOUND', detail: 'proyecto/escenas desaparecidos durante el job' })
+    incCounter('jobs_total', { type: 'assembly', status: 'failed' })
     await db.assemblyJob.update({
       where: { id: jobId },
       data: { status: 'failed', errorMessage: problemToColumn(new AppError('NOT_FOUND', 'proyecto/escenas desaparecidos durante el job').problem), finishedAt: new Date() },
     })
     return
   }
-  const params = JSON.parse(job.params) as { includeAudio: boolean; musicAssetKey: string | null; musicVolume: number }
+  const raw = JSON.parse(job.params) as {
+    includeAudio: boolean
+    musicAssetKey: string | null
+    musicVolume: number
+    aspect?: string
+    subtitles?: SubtitleMode
+    duckMusic?: boolean
+    coverSceneId?: string | null
+  }
   const outcome = await assembleProject(job.projectId, jobId, scenes.map((s) => ({
     sceneId: s.id,
     videoClipPath: s.videoClipPath ?? '',
     audioPath: s.audioPath,
     durationSeconds: s.durationSeconds,
+    subtitleText: s.narrationText ?? s.improvedText ?? s.originalText,
   })), {
-    includeAudio: params.includeAudio,
-    musicAssetKey: params.musicAssetKey,
-    musicVolume: params.musicVolume,
+    includeAudio: raw.includeAudio,
+    musicAssetKey: raw.musicAssetKey,
+    musicVolume: raw.musicVolume,
     resolution: project.outputResolution as '720p' | '1080p',
+    aspect: raw.aspect ?? '16:9',
+    subtitles: raw.subtitles ?? 'none',
+    duckMusic: raw.duckMusic ?? false,
+    coverSceneId: raw.coverSceneId ?? null,
+  }, {
+    onProgress: async (progress) => {
+      await db.assemblyJob.update({ where: { id: jobId }, data: { progress: JSON.stringify(progress) } })
+    },
   })
   if ('outputPath' in outcome) {
     await db.assemblyJob.update({
       where: { id: jobId },
-      data: { status: 'completed', outputPath: outcome.outputPath, finishedAt: new Date() },
+      data: {
+        status: 'completed',
+        outputPath: outcome.outputPath,
+        subtitlesPath: outcome.subtitlesPath,
+        thumbnailPath: outcome.thumbnailPath,
+        progress: JSON.stringify({ stage: 'done', done: 1, total: 1 }),
+        finishedAt: new Date(),
+      },
     })
     await db.project.update({ where: { id: job.projectId }, data: { status: 'assembled' } })
+    incCounter('jobs_total', { type: 'assembly', status: 'completed' })
+    observeDurationSeconds('job_duration_seconds', (Date.now() - startedAt) / 1000, { type: 'assembly' })
     logger.info('job.assembly.completed', { jobId, projectId: job.projectId, ms: Date.now() - startedAt, outputPath: outcome.outputPath })
   } else {
     await db.assemblyJob.update({
@@ -249,8 +305,51 @@ async function runAssemblyJob(jobId: string): Promise<void> {
       data: { status: 'failed', errorMessage: problemToColumn(outcome.problem), finishedAt: new Date() },
     })
     await db.project.update({ where: { id: job.projectId }, data: { status: 'failed' } })
+    incCounter('jobs_total', { type: 'assembly', status: 'failed' })
+    observeDurationSeconds('job_duration_seconds', (Date.now() - startedAt) / 1000, { type: 'assembly' })
     logger.error('job.assembly.failed', { jobId, projectId: job.projectId, code: outcome.problem.code, detail: outcome.problem.detail, ms: Date.now() - startedAt })
   }
+}
+
+// ---------------------------------------------------------------- reintentos
+
+/**
+ * Reintento de un job failed: se crea un job NUEVO con los mismos parámetros
+ * (los jobs del historial son inmutables). La reanudación real la aporta la
+ * caché de segmentos normalizados de assembly.ts: los clips ya normalizados
+ * se reutilizan y solo se repite el tramo que falló.
+ */
+export async function retryAssemblyJob(jobId: string): Promise<string> {
+  const job = await db.assemblyJob.findUnique({ where: { id: jobId } })
+  if (job === null) throw new AppError('NOT_FOUND', `job ${jobId} no encontrado`, { jobId })
+  if (job.status !== 'failed') {
+    throw new AppError('STATE_CONFLICT', `solo se reintentan jobs en estado failed (estado actual: ${job.status})`, { jobId })
+  }
+  const raw = JSON.parse(job.params) as {
+    includeAudio?: boolean
+    musicVolume?: number
+    aspect?: string
+    subtitles?: SubtitleMode
+    duckMusic?: boolean
+    coverSceneId?: string | null
+    features?: Array<'naturalness' | 'sync' | 'loudness' | 'artifacts'>
+    generateSfx?: boolean
+  }
+  if (job.jobType === 'assembly') {
+    return createAssemblyJob(job.projectId, {
+      includeAudio: raw.includeAudio ?? true,
+      musicVolume: raw.musicVolume ?? airshotConfig.assembly.music_default_volume,
+      aspect: raw.aspect ?? '16:9',
+      subtitles: raw.subtitles ?? 'none',
+      duckMusic: raw.duckMusic ?? false,
+      coverSceneId: raw.coverSceneId ?? null,
+    })
+  }
+  if (job.jobType === 'audio_qa') {
+    const features = raw.features ?? ['loudness']
+    return createAudioQAJob(job.projectId, features, raw.generateSfx ?? false)
+  }
+  throw new AppError('VALIDATION_ERROR', `jobType "${job.jobType}" no es reintentable`, { jobId })
 }
 
 // ---------------------------------------------------------------- audio-qa (Earshot)
@@ -327,9 +426,13 @@ async function runAudioQAJob(jobId: string, features: Array<'naturalness' | 'syn
       data: { status: 'completed', outputPath: reportKey, report: JSON.stringify(report), finishedAt: new Date() },
     })
     logger.info('job.audio_qa.completed', { jobId, projectId: job.projectId, ms: Date.now() - startedAt })
+    incCounter('jobs_total', { type: 'audio_qa', status: 'completed' })
+    observeDurationSeconds('job_duration_seconds', (Date.now() - startedAt) / 1000, { type: 'audio_qa' })
   } catch (err) {
     const problem = errorSnapshot(err)
     logger.error('job.audio_qa.failed', { jobId, projectId: job.projectId, code: problem.code, detail: problem.detail, ms: Date.now() - startedAt })
+    incCounter('jobs_total', { type: 'audio_qa', status: 'failed' })
+    observeDurationSeconds('job_duration_seconds', (Date.now() - startedAt) / 1000, { type: 'audio_qa' })
     await db.assemblyJob.update({
       where: { id: jobId },
       data: { status: 'failed', errorMessage: problemToColumn(problem), finishedAt: new Date() },
