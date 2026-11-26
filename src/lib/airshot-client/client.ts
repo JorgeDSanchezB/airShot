@@ -5,6 +5,17 @@
 import type {
   AppProblem,
   AssemblyJobResponse,
+  BatchRun,
+  BatchStep,
+  ConsistencyReport,
+  PublishResult,
+  LanguageAudioResult,
+  TranslationLanguagesResponse,
+  DatabaseBackupResult,
+  MediaGcResult,
+  MediaReport,
+  TransferExportResult,
+  TransferImportResult,
   CursorPage,
   HealthDeep,
   OpsSummary,
@@ -13,6 +24,7 @@ import type {
   ProviderConfigResponse,
   ReferenceResponse,
   RuntimeConfig,
+  SceneAssetVersion,
   SceneResponse,
   VisualStyleResponse,
   VoiceInfo,
@@ -31,7 +43,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     ...init,
     headers: {
-      ...(init?.body !== undefined ? { 'content-type': 'application/json' } : {}),
+      ...(init?.body !== undefined && !(init.body instanceof FormData) ? { 'content-type': 'application/json' } : {}),
       ...(init?.headers ?? {}),
     },
   })
@@ -101,8 +113,19 @@ export const api = {
 
   deleteMusic: (id: string) => apiFetch<void>(`/projects/${id}/music`, { method: 'DELETE' }),
 
-  assemble: (id: string, body: { includeAudio?: boolean; musicVolume?: number; aspect?: string; subtitles?: 'none' | 'srt' | 'burn'; duckMusic?: boolean; coverSceneId?: string | null }) =>
+  assemble: (id: string, body: { includeAudio?: boolean; musicVolume?: number; aspect?: string; subtitles?: 'none' | 'srt' | 'burn'; duckMusic?: boolean; coverSceneId?: string | null; audioLanguage?: string | null; subtitleLanguages?: string[] }) =>
     apiFetch<AssemblyJobResponse>(`/projects/${id}/assemble`, { method: 'POST', body: JSON.stringify(body) }),
+
+  getLanguages: (id: string) => apiFetch<TranslationLanguagesResponse>(`/projects/${id}/translations`),
+
+  translateProject: (id: string, body: { languages: string[]; voiceId?: string | null }) =>
+    apiFetch<{ results: Array<{ language: string; scenes: number; provider: string }> }>(`/projects/${id}/translations`, { method: 'POST', body: JSON.stringify(body) }),
+
+  generateLanguageAudio: (id: string, language: string, body: { regenerate?: boolean; voiceId?: string | null }) =>
+    apiFetch<LanguageAudioResult>(`/projects/${id}/translations/${language}/audio`, { method: 'POST', body: JSON.stringify(body) }),
+
+  deleteLanguage: (id: string, language: string) =>
+    apiFetch<{ language: string; deleted: number }>(`/projects/${id}/translations/${language}`, { method: 'DELETE' }),
 
   retryAssembly: (jobId: string) =>
     apiFetch<AssemblyJobResponse>(`/assemblies/${jobId}/retry`, { method: 'POST', body: JSON.stringify({}) }),
@@ -116,6 +139,34 @@ export const api = {
     apiFetch<CursorPage<AssemblyJobResponse>>(withQuery(`/projects/${id}/assemblies`, params)),
 
   getAssemblyJob: (jobId: string) => apiFetch<AssemblyJobResponse>(`/assemblies/${jobId}`),
+
+  startBatch: (id: string, body: { steps?: BatchStep[]; regenerate?: boolean }) =>
+    apiFetch<BatchRun>(`/projects/${id}/batch-generate`, { method: 'POST', body: JSON.stringify(body) }),
+
+  getLatestBatch: (id: string) => apiFetch<{ batch: BatchRun | null }>(`/projects/${id}/batch-generate`),
+
+  controlBatch: (batchId: string, action: 'pause' | 'resume' | 'cancel') =>
+    apiFetch<BatchRun>(`/batches/${batchId}`, { method: 'PATCH', body: JSON.stringify({ action }) }),
+
+  getConsistency: (id: string) => apiFetch<ConsistencyReport>(`/projects/${id}/consistency`),
+
+  publish: (id: string, body: { metadata?: boolean }) =>
+    apiFetch<PublishResult>(`/projects/${id}/publish`, { method: 'POST', body: JSON.stringify(body) }),
+
+  exportProject: (id: string, body: { includeMedia?: boolean }) =>
+    apiFetch<TransferExportResult>(`/projects/${id}/export`, { method: 'POST', body: JSON.stringify(body) }),
+
+  importProject: (file: File) => {
+    const form = new FormData()
+    form.set('file', file)
+    return apiFetch<TransferImportResult>('/projects/import', { method: 'POST', body: form })
+  },
+
+  backupDatabase: () => apiFetch<DatabaseBackupResult>('/ops/backup', { method: 'POST', body: JSON.stringify({}) }),
+
+  getMediaReport: () => apiFetch<MediaReport>('/ops/media-report'),
+
+  gcMedia: (apply: boolean) => apiFetch<MediaGcResult>('/ops/media-gc', { method: 'POST', body: JSON.stringify({ apply }) }),
 
   // ---------- scenes ----------
 
@@ -152,6 +203,12 @@ export const api = {
 
   generateSceneAudio: (id: string, body: { providerOverride?: string; voiceId?: string | null }) =>
     apiFetch<SceneResponse>(`/scenes/${id}/generate-audio`, { method: 'POST', body: JSON.stringify(body) }),
+
+  listSceneVersions: (id: string) =>
+    apiFetch<{ items: SceneAssetVersion[] }>(`/scenes/${id}/versions`),
+
+  restoreSceneVersion: (sceneId: string, versionId: string) =>
+    apiFetch<SceneResponse>(`/scenes/${sceneId}/versions/${versionId}/restore`, { method: 'POST', body: JSON.stringify({}) }),
 
   // ---------- references ----------
 

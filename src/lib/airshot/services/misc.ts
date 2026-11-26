@@ -4,10 +4,12 @@
 // storage y security excluidos por decisión del árbitro, ronda 1).
 
 import { db } from '@/lib/db'
+import { statfs } from 'node:fs/promises'
 import { airshotConfig, airshotRegistry } from '@/lib/airshot/config/loader'
 import { AppError } from '@/lib/airshot/core/errors'
 import { storage } from '@/lib/airshot/infrastructure/storage'
 import { probeDuration, ffmpegVersion, ffprobeVersion } from '@/lib/airshot/infrastructure/ffmpeg'
+import { encoderPlan } from '@/lib/airshot/infrastructure/hwaccel'
 import { getTTSProvider } from '@/lib/airshot/infrastructure/providers/factory'
 import { parseBasicPageQuery } from '@/lib/airshot/core/pagination'
 import type { VoiceInfo } from '@/lib/airshot/infrastructure/providers/types'
@@ -123,7 +125,6 @@ export async function healthDeep(): Promise<{ status: string; checks: Array<{ na
     detail: needsKey.length === 0 ? 'todas las configs con key' : `sin key: ${needsKey.map((r) => `${r.providerName} [${r.providerType}]`).join(', ')}`,
   })
   try {
-    const { statfs } = await import('node:fs/promises')
     const space = await statfs(storage.root)
     const freeBytes = Number(space.bavail) * Number(space.bsize)
     const totalBytes = Number(space.blocks) * Number(space.bsize)
@@ -141,6 +142,16 @@ export async function healthDeep(): Promise<{ status: string; checks: Array<{ na
   } catch (err) {
     checks.push({ name: 'jobs', ok: false, detail: err instanceof Error ? err.message : String(err) })
   }
+  try {
+    const plan = await encoderPlan()
+    checks.push({
+      name: 'hwaccel',
+      ok: true,
+      detail: plan.software ? `software (${plan.tag})` : `acelerado (${plan.tag})`,
+    })
+  } catch (err) {
+    checks.push({ name: 'hwaccel', ok: false, detail: err instanceof Error ? err.message : String(err) })
+  }
   return { status: 'ok', checks }
 }
 
@@ -151,18 +162,22 @@ export function runtimeConfig(): Record<string, unknown> {
   return {
     app: { batch_max_operations: airshotConfig.app.batch_max_operations },
     pagination: airshotConfig.pagination,
+    batch: airshotConfig.batch,
     story: airshotConfig.story,
     scene: airshotConfig.scene,
     scene_reference: airshotConfig.scene_reference,
     reference: airshotConfig.reference,
     visual_style: airshotConfig.visual_style,
     upload: airshotConfig.upload,
+    transfer: airshotConfig.transfer,
+    translation: airshotConfig.translation,
     media: airshotConfig.media,
     assembly: {
       require_audio: airshotConfig.assembly.require_audio,
       music_default_volume: airshotConfig.assembly.music_default_volume,
       output_fps: airshotConfig.assembly.output_fps,
       aspects: Object.keys(airshotConfig.assembly.aspect_ratios),
+      hwaccel_enabled: airshotConfig.assembly.hwaccel.enabled,
     },
     audio_qa: { enabled: airshotConfig.audio_qa.earshot.enabled },
     providers: {

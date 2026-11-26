@@ -53,6 +53,7 @@ export type ProjectResponseDto = {
   outputFormat: string
   outputResolution: string
   voiceId: string | null
+  visualSeed: number | null
   musicAssetKey: string | null
   musicUrl: string | null
   musicVolume: number
@@ -90,6 +91,7 @@ export function toProjectResponse(row: Project, sceneCount: number, styleName: s
     outputFormat: row.outputFormat,
     outputResolution: row.outputResolution,
     voiceId: row.voiceId,
+    visualSeed: row.visualSeed,
     musicAssetKey: row.musicAssetKey,
     musicUrl: storage.resolveUrl(row.musicAssetKey),
     musicVolume: row.musicVolume,
@@ -112,6 +114,9 @@ export type SceneResponseDto = {
   improvedText: string | null
   promptEn: string | null
   durationSeconds: number
+  seed: number | null
+  trimStartSeconds: number | null
+  trimEndSeconds: number | null
   narrationSource: string
   narrationText: string | null
   voiceId: string | null
@@ -139,6 +144,9 @@ export function toSceneResponse(row: Scene, refs: SceneReferenceDto[]): SceneRes
     improvedText: row.improvedText,
     promptEn: row.promptEn,
     durationSeconds: row.durationSeconds,
+    seed: row.seed,
+    trimStartSeconds: row.trimStartSeconds,
+    trimEndSeconds: row.trimEndSeconds,
     narrationSource: row.narrationSource,
     narrationText: row.narrationText,
     voiceId: row.voiceId,
@@ -257,6 +265,9 @@ export type AssemblyJobResponseDto = {
   outputPath: string | null
   outputUrl: string | null
   subtitlesUrl: string | null
+  subtitlesMethod: 'whisper' | 'estimated' | 'mixed' | null
+  subtitlesTracks: Array<{ language: string; path: string; url: string }>
+  audioLanguage: string | null
   thumbnailUrl: string | null
   progress: AssemblyProgressDto | null
   report: Record<string, unknown> | null
@@ -276,6 +287,13 @@ export function toAssemblyJobResponse(row: AssemblyJob): AssemblyJobResponseDto 
     outputPath: row.outputPath,
     outputUrl: storage.resolveUrl(row.outputPath),
     subtitlesUrl: storage.resolveUrl(row.subtitlesPath),
+    subtitlesMethod: row.subtitlesMethod as AssemblyJobResponseDto['subtitlesMethod'],
+    subtitlesTracks: parseJsonLoose<Array<{ language: string; path: string }>>(row.subtitlesTracks, []).map((track) => ({
+      language: track.language,
+      path: track.path,
+      url: storage.resolveUrl(track.path) ?? '',
+    })),
+    audioLanguage: row.audioLanguage,
     thumbnailUrl: storage.resolveUrl(row.thumbnailPath),
     progress: parseJsonLoose<AssemblyProgressDto | null>(row.progress, null),
     report: parseJsonLoose<Record<string, unknown> | null>(row.report, null),

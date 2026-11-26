@@ -11,6 +11,7 @@ import { toast } from 'sonner'
 import { api, ApiError } from '@/lib/airshot-client/client'
 import type {
   AssemblyJobResponse,
+  BatchStep,
   CursorPage,
   ProjectResponse,
   ProjectSummary,
@@ -84,6 +85,79 @@ export function useReferences(filters: { scope?: 'global' | 'project'; projectId
     queryFn: ({ pageParam }) => api.listReferences({ limit: 25, cursor: pageParam as string | null, ...filters }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
+  })
+}
+
+export function usePublish(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { metadata?: boolean }) => api.publish(projectId, body),
+    onSuccess: (result) => {
+      toast.success(`Paquete listo (${(result.sizeBytes / 1024 / 1024).toFixed(1)} MB)`, {
+        action: { label: 'Descargar', onClick: () => window.open(result.url, '_blank') },
+      })
+      void qc.invalidateQueries({ queryKey: ['ops-summary'] })
+    },
+    onError: (err) => toastProblem('Paquete de publicación', err),
+  })
+}
+
+export function useLanguages(projectId: string) {
+  return useQuery({
+    queryKey: ['languages', projectId],
+    queryFn: () => api.getLanguages(projectId),
+  })
+}
+
+export function useTranslateProject(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { languages: string[]; voiceId?: string | null }) => api.translateProject(projectId, body),
+    onSuccess: (result) => {
+      toast.success(`Texto traducido: ${result.results.map((item) => `${item.language} (${item.scenes} escenas)`).join(' · ')}`, {
+        description: 'Genera ahora las voces del idioma para poder doblar el ensamblaje.',
+      })
+      void qc.invalidateQueries({ queryKey: ['languages', projectId] })
+    },
+    onError: (err) => toastProblem('Traducir proyecto', err),
+  })
+}
+
+export function useLanguageAudio(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ language, regenerate }: { language: string; regenerate?: boolean }) => api.generateLanguageAudio(projectId, language, { regenerate }),
+    onSuccess: (result) => {
+      if (result.failed > 0) {
+        toast.warning(`Voces ${result.language}: ${result.generated} generadas, ${result.failed} fallidas`, {
+          description: result.errors.slice(0, 2).map((error) => `${error.code}: ${error.detail}`).join(' · '),
+        })
+      } else {
+        toast.success(`Voces ${result.language}: ${result.audioReady}/${result.totalScenes} escenas listas`)
+      }
+      void qc.invalidateQueries({ queryKey: ['languages', projectId] })
+    },
+    onError: (err) => toastProblem('Generar voces del idioma', err),
+  })
+}
+
+export function useDeleteLanguage(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (language: string) => api.deleteLanguage(projectId, language),
+    onSuccess: (result) => {
+      toast.success(`Idioma «${result.language}» eliminado (${result.deleted} escenas)`)
+      void qc.invalidateQueries({ queryKey: ['languages', projectId] })
+    },
+    onError: (err) => toastProblem('Eliminar idioma', err),
+  })
+}
+
+export function useConsistency(projectId: string | null) {
+  return useQuery({
+    queryKey: ['consistency', projectId],
+    queryFn: () => api.getConsistency(projectId as string),
+    enabled: projectId !== null,
   })
 }
 
@@ -186,6 +260,33 @@ export function useDeleteProject() {
       void qc.invalidateQueries({ queryKey: ['projects'] })
     },
     onError: (err) => toastProblem('Borrar proyecto', err),
+  })
+}
+
+export function useExportProject() {
+  return useMutation({
+    mutationFn: ({ id, includeMedia }: { id: string; includeMedia: boolean }) => api.exportProject(id, { includeMedia }),
+    onSuccess: (result) => {
+      toast.success(`Proyecto exportado (${(result.sizeBytes / 1024 / 1024).toFixed(1)} MB)`, {
+        description: `${result.scenes} escenas · ${result.references} referencias · ${result.mediaFiles} archivos de media`,
+        action: { label: 'Descargar', onClick: () => window.open(result.url, '_blank') },
+      })
+    },
+    onError: (err) => toastProblem('Exportar proyecto', err),
+  })
+}
+
+export function useImportProject() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (file: File) => api.importProject(file),
+    onSuccess: (result) => {
+      toast.success(`Proyecto importado: «${result.title}»`, {
+        description: result.warnings.length > 0 ? result.warnings.join(' · ') : `${result.scenes} escenas · ${result.mediaFiles} archivos de media`,
+      })
+      void qc.invalidateQueries({ queryKey: ['projects'] })
+    },
+    onError: (err) => toastProblem('Importar proyecto', err),
   })
 }
 
@@ -300,6 +401,29 @@ export function useGenerateSceneVideo() {
   })
 }
 
+export function useSceneVersions(sceneId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ['scene-versions', sceneId],
+    queryFn: () => api.listSceneVersions(sceneId as string),
+    enabled: enabled && sceneId !== null,
+  })
+}
+
+export function useRestoreSceneVersion() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ sceneId, versionId }: { sceneId: string; versionId: string }) => api.restoreSceneVersion(sceneId, versionId),
+    onSuccess: (scene: SceneResponse) => {
+      toast.success('Versión restaurada')
+      void qc.invalidateQueries({ queryKey: ['scene', scene.id] })
+      void qc.invalidateQueries({ queryKey: ['scenes', scene.projectId] })
+      void qc.invalidateQueries({ queryKey: ['scene-versions', scene.id] })
+      void qc.invalidateQueries({ queryKey: ['project', scene.projectId] })
+    },
+    onError: (err) => toastProblem('Restaurar versión', err),
+  })
+}
+
 export function useDeleteSceneAsset(kind: 'image' | 'video' | 'audio') {
   const qc = useQueryClient()
   return useMutation({
@@ -318,7 +442,7 @@ export function useAssemble() {
   return useMutation({
     mutationFn: ({ projectId, body }: {
       projectId: string
-      body: { includeAudio?: boolean; musicVolume?: number; aspect?: string; subtitles?: 'none' | 'srt' | 'burn'; duckMusic?: boolean; coverSceneId?: string | null }
+      body: { includeAudio?: boolean; musicVolume?: number; aspect?: string; subtitles?: 'none' | 'srt' | 'burn'; duckMusic?: boolean; coverSceneId?: string | null; audioLanguage?: string | null; subtitleLanguages?: string[] }
     }) => api.assemble(projectId, body),
     onSuccess: (job: AssemblyJobResponse, vars) => {
       toast.info('Ensamblaje en curso (202) — sondea la lista de jobs')
@@ -349,6 +473,86 @@ export function useOpsSummary(enabled: boolean) {
     queryFn: api.getOpsSummary,
     enabled,
     refetchInterval: 15_000,
+  })
+}
+
+export function useBackupDatabase() {
+  return useMutation({
+    mutationFn: () => api.backupDatabase(),
+    onSuccess: (result) => {
+      toast.success(`Respaldo de BD listo (${(result.sizeBytes / 1024).toFixed(0)} KB)`, {
+        action: { label: 'Descargar', onClick: () => window.open(result.url, '_blank') },
+      })
+    },
+    onError: (err) => toastProblem('Respaldo de BD', err),
+  })
+}
+
+export function useMediaReport(enabled: boolean) {
+  return useQuery({
+    queryKey: ['media-report'],
+    queryFn: api.getMediaReport,
+    enabled,
+    staleTime: 30_000,
+  })
+}
+
+export function useMediaGc() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (apply: boolean) => api.gcMedia(apply),
+    onSuccess: (result) => {
+      if (result.applied) {
+        toast.success(`Media huérfana borrada: ${result.deletedFiles} archivo(s), ${(result.freedBytes / 1024 / 1024).toFixed(1)} MB liberados`)
+      } else {
+        toast.info(`Simulación: ${result.orphanFiles} huérfanos (${(result.orphanBytes / 1024 / 1024).toFixed(1)} MB)`)
+      }
+      void qc.invalidateQueries({ queryKey: ['media-report'] })
+      void qc.invalidateQueries({ queryKey: ['ops-summary'] })
+    },
+    onError: (err) => toastProblem('Limpiar media huérfana', err),
+  })
+}
+
+export function useLatestBatch(projectId: string | null) {
+  return useQuery({
+    queryKey: ['batch', projectId],
+    queryFn: () => api.getLatestBatch(projectId as string),
+    enabled: projectId !== null,
+    refetchInterval: (query) => {
+      const status = query.state.data?.batch?.status
+      return status === 'running' || status === 'paused' ? 2_000 : false
+    },
+  })
+}
+
+export function useStartBatch(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { steps?: BatchStep[]; regenerate?: boolean }) => api.startBatch(projectId, body),
+    onSuccess: (run) => {
+      toast.info(`Generación masiva en curso: ${run.total} escenas`)
+      void qc.invalidateQueries({ queryKey: ['batch', projectId] })
+    },
+    onError: (err) => toastProblem('Generar todo', err),
+  })
+}
+
+export function useBatchControl(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ batchId, action }: { batchId: string; action: 'pause' | 'resume' | 'cancel' }) =>
+      api.controlBatch(batchId, action),
+    onSuccess: (run) => {
+      const label = run.status === 'paused' ? 'pausada' : run.status === 'cancelled' ? 'cancelada' : 'reanudada'
+      toast.success(`Generación masiva ${label}`)
+      void qc.invalidateQueries({ queryKey: ['batch', projectId] })
+      if (run.status === 'cancelled' || run.status === 'completed') {
+        void qc.invalidateQueries({ queryKey: ['scenes', projectId] })
+        void qc.invalidateQueries({ queryKey: ['project', projectId] })
+      }
+    },
+    onError: (err) => toastProblem('Controlar generación masiva', err),
   })
 }
 

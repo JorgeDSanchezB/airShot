@@ -24,6 +24,8 @@ export const POST = withRoute<Ctx>(async (req: NextRequest, { params }) => {
     subtitles: body.subtitles ?? 'none',
     duckMusic: body.duckMusic ?? false,
     coverSceneId: body.coverSceneId ?? null,
+    audioLanguage: body.audioLanguage ?? null,
+    subtitleLanguages: body.subtitleLanguages ?? [],
   })
   const job = await db.assemblyJob.findUniqueOrThrow({ where: { id: jobId } })
   return okJson(toAssemblyJobResponse(job), 202)

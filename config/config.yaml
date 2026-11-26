@@ -17,6 +17,11 @@ pagination:
   default_page_size: 25
   max_page_size: 100
 
+batch:                                 # generación masiva por proyecto (imagen→audio→vídeo)
+  max_scenes: 200
+  pause_between_ms: 200
+  poll_ms: 1000
+
 story:
   max_title_length: 200
   max_original_story_length: 100000
@@ -25,6 +30,8 @@ scene:
   min_duration_seconds: 4              # LISTÓN: 4
   default_duration_seconds: 6          # LISTÓN: 6 por defecto
   max_duration_seconds: 15             # LISTÓN: 15
+  min_trim_seconds: 1                  # ventana mínima al recortar un clip en el timeline
+  asset_versions_max: 10               # versiones conservadas por escena y tipo (imagen/clip/audio)
   max_scenes_per_project: 200          # R-08
   prompt_max_length: 2000
   composed_prompt_max_chars: 16000      # tope del prompt COMPUESTO (escena+estilo+refs) enviado al proveedor de imagen/vídeo (extensión ronda B — antes prompt_max_length*8 hardcodeado)
@@ -62,6 +69,13 @@ upload:
     max_bytes: 52428800               # 50 MiB
     allowed_mime: ["audio/mpeg", "audio/wav", "audio/ogg"]
 
+translation:                           # doblaje multi-idioma (traducción LLM + TTS por idioma)
+  max_languages: 4                     # idiomas por proyecto (además de la narración base)
+
+transfer:                              # exportación/importación .airshot y salud de datos
+  max_archive_bytes: 524288000        # 500 MiB tope del .airshot al importar (413 si se supera)
+  include_media_default: true         # exportar por defecto con imágenes/clips/narración
+
 assembly:
   ffmpeg_path: "ffmpeg"
   ffprobe_path: "ffprobe"
@@ -83,9 +97,25 @@ assembly:
   subtitles:                           # burn-in opcional (srt sidecar siempre disponible)
     font_size: 22
     margin_v: 24
+    align:                             # forced alignment opcional con whisper.cpp local
+      enabled: true
+      command: "whisper-cli"           # binario (whisper-cli/whisper-cpp/...); vacío = sin alinear
+      model_path: ""                   # ruta al modelo ggml (p. ej. models/ggml-base.bin); vacío = sin alinear
+      language: "auto"                 # auto | es | en | ...
+      max_cue_chars: 48                # segmentos más largos se parten proporcionalmente
+      timeout_seconds: 120
+  transitions:                         # fade a negro en cada corte (duración exacta por escena)
+    enabled: true
+    duration_seconds: 0.4
+  still_image:                         # escena sin clip: el ensamblaje genera Ken Burns desde la imagen base
+    enabled: true
+    zoom: 0.10
   music_ducking:                       # sidechaincompress cuando hay narración + música
     threshold: 0.05
     ratio: 6
+  hwaccel:                             # codificación normalizada con encoder HW si existe; fallback x264
+    enabled: true
+    preferred: ["h264_nvenc", "h264_qsv", "h264_amf", "h264_videotoolbox"]
 
 storage:
   root: "./data"                       # uploads/ y outputs/ bajo la raíz (§3.5)

@@ -34,6 +34,7 @@ export const CreateProjectRequest = z.strictObject({
       visualStyleId: uuidField.nullish(),
       outputResolution: resolution.nullish(),
       voiceId: z.string().max(200).nullish(),
+      visualSeed: z.number().int().min(0).max(2 ** 31 - 1).nullish(),
     })
     .nullish(),
 })
@@ -48,6 +49,7 @@ export const PatchProjectRequest = z.strictObject({
   outputResolution: resolution.optional(),
   voiceId: z.string().max(200).nullable().optional(),
   musicVolume: z.number().positive().max(1).optional(),
+  visualSeed: z.number().int().min(0).max(2 ** 31 - 1).nullable().optional(),
 })
 
 export const StoryboardRequest = z.strictObject({
@@ -63,6 +65,8 @@ export const StoryboardRequest = z.strictObject({
 // las proporciones válidas salen de config (cero hardcoding)
 const aspectKey = z.enum(Object.keys(airshotConfig.assembly.aspect_ratios) as [string, ...string[]])
 
+export const languageField = z.string().regex(/^[a-z]{2}(-[A-Z]{2})?$/, 'idioma ISO 639-1 (p. ej. en, en-US)')
+
 export const AssembleRequest = z.strictObject({
   includeAudio: z.boolean().optional(),
   musicVolume: z.number().positive().max(1).optional(),
@@ -70,6 +74,18 @@ export const AssembleRequest = z.strictObject({
   subtitles: z.enum(['none', 'srt', 'burn']).optional(),
   duckMusic: z.boolean().optional(),
   coverSceneId: uuidField.nullable().optional(),
+  audioLanguage: languageField.nullable().optional(),
+  subtitleLanguages: z.array(languageField).max(airshotConfig.translation.max_languages).optional(),
+})
+
+export const TranslateProjectRequest = z.strictObject({
+  languages: z.array(languageField).min(1).max(airshotConfig.translation.max_languages),
+  voiceId: z.string().max(200).nullable().optional(),
+})
+
+export const GenerateLanguageAudioRequest = z.strictObject({
+  regenerate: z.boolean().optional(),
+  voiceId: z.string().max(200).nullable().optional(),
 })
 
 export const AudioQARequest = z.strictObject({
@@ -98,15 +114,20 @@ export const PatchSceneRequest = z.strictObject({
   narrationSource: z.enum(['improved', 'original', 'custom']).optional(),
   narrationText: z.string().max(airshotConfig.scene.prompt_max_length).nullable().optional(),
   voiceId: z.string().max(200).nullable().optional(),
+  seed: z.number().int().min(0).max(2 ** 31 - 1).nullable().optional(),
+  trimStartSeconds: z.number().min(0).max(airshotConfig.scene.max_duration_seconds).nullable().optional(),
+  trimEndSeconds: z.number().min(0).max(airshotConfig.scene.max_duration_seconds).nullable().optional(),
 })
 
 export const GenerateSceneImageRequest = z.strictObject({
   providerOverride: z.string().max(100).optional(),
   styleId: uuidField.optional(),
+  seed: z.number().int().min(0).max(2 ** 31 - 1).optional(),
 })
 
 export const GenerateSceneVideoRequest = z.strictObject({
   providerOverride: registeredVideo.optional(),
+  seed: z.number().int().min(0).max(2 ** 31 - 1).optional(),
   durationSeconds: z
     .number()
     .int()
@@ -122,6 +143,27 @@ export const GenerateSceneAudioRequest = z.strictObject({
 
 export const ReorderScenesRequest = z.strictObject({
   sceneIds: z.array(uuidField).min(1),
+})
+
+export const BatchGenerateRequest = z.strictObject({
+  steps: z.array(z.enum(['image', 'audio', 'video'])).min(1).max(3).optional(),
+  regenerate: z.boolean().optional(),
+})
+
+export const BatchControlRequest = z.strictObject({
+  action: z.enum(['pause', 'resume', 'cancel']),
+})
+
+export const PublishRequest = z.strictObject({
+  metadata: z.boolean().optional(),
+})
+
+export const ExportProjectRequest = z.strictObject({
+  includeMedia: z.boolean().optional(),
+})
+
+export const MediaGcRequest = z.strictObject({
+  apply: z.boolean(),
 })
 
 export const SceneReferencesPutRequest = z.strictObject({

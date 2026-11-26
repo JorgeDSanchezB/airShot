@@ -73,6 +73,7 @@ export type ImageGenerationRequest = {
   promptEn: string
   styleFragmentEn?: string | null
   aspectRatio?: '16:9'
+  seed?: number
 }
 
 export type ImageGenerationResult = {

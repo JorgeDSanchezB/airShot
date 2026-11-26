@@ -19,6 +19,7 @@ import { storage } from '@/lib/airshot/infrastructure/storage'
 import { getImageProvider, getTTSProvider, getVideoProvider, withProviderConcurrency } from '@/lib/airshot/infrastructure/providers/factory'
 import { isSceneJobActive, startSceneVideoJob } from '@/lib/airshot/services/jobs'
 import { getProjectOr404 } from '@/lib/airshot/services/projects'
+import { recordAssetVersion } from '@/lib/airshot/services/versions'
 import type { z } from 'zod'
 import type {
   GenerateSceneAudioRequest,
@@ -102,8 +103,22 @@ export async function patchScene(id: string, body: z.infer<typeof PatchSceneRequ
   if (body.narrationSource === 'custom' && body.narrationText === undefined && row.narrationText === null) {
     throw new AppError('VALIDATION_ERROR', 'narrationSource=custom exige narrationText no nulo', { sceneId: id, field: 'narrationText' })
   }
+  const nextTrimStart = body.trimStartSeconds !== undefined ? (body.trimStartSeconds ?? 0) : (row.trimStartSeconds ?? 0)
+  const nextTrimEnd = body.trimEndSeconds !== undefined ? body.trimEndSeconds : row.trimEndSeconds
+  if (nextTrimEnd !== null) {
+    const length = nextTrimEnd - nextTrimStart
+    if (length < airshotConfig.scene.min_trim_seconds) {
+      throw new AppError('VALIDATION_ERROR', `la ventana recortada (${length.toFixed(2)}s) es menor que scene.min_trim_seconds=${airshotConfig.scene.min_trim_seconds}`, { sceneId: id, field: 'trimEndSeconds' })
+    }
+    if (length > airshotConfig.scene.max_duration_seconds) {
+      throw new AppError('VALIDATION_ERROR', `la ventana recortada (${length.toFixed(2)}s) supera scene.max_duration_seconds=${airshotConfig.scene.max_duration_seconds}`, { sceneId: id, field: 'trimEndSeconds' })
+    }
+    if (row.videoEffectiveSeconds !== null && nextTrimEnd > row.videoEffectiveSeconds + 0.5) {
+      throw new AppError('VALIDATION_ERROR', `trimEndSeconds (${nextTrimEnd}s) supera la duración real del clip (${row.videoEffectiveSeconds}s)`, { sceneId: id, field: 'trimEndSeconds' })
+    }
+  }
   const data: Record<string, unknown> = {}
-  for (const key of ['durationSeconds', 'promptEn', 'improvedText', 'narrationSource', 'narrationText', 'voiceId'] as const) {
+  for (const key of ['durationSeconds', 'promptEn', 'improvedText', 'narrationSource', 'narrationText', 'voiceId', 'seed', 'trimStartSeconds', 'trimEndSeconds'] as const) {
     if (Object.prototype.hasOwnProperty.call(body, key)) {
       data[key] = (body as Record<string, unknown>)[key]
     }
@@ -118,6 +133,8 @@ export async function patchScene(id: string, body: z.infer<typeof PatchSceneRequ
 export async function deleteScene(id: string): Promise<void> {
   const row = await recoverStalePending(id)
   assertNoPending(row)
+  const versions = await db.sceneAssetVersion.findMany({ where: { sceneId: id } })
+  for (const version of versions) storage.delete(version.storageKey)
   storage.delete(row.imageBasePath)
   storage.delete(row.videoClipPath)
   storage.delete(row.audioPath)
@@ -292,8 +309,9 @@ export async function generateSceneImage(id: string, body: z.infer<typeof Genera
   await db.scene.update({ where: { id }, data: { status: 'image_pending' } })
   try {
     const { provider, name } = await getImageProvider(body.providerOverride)
+    const seed = body.seed ?? scene.seed ?? project.visualSeed ?? undefined
     const result = await withProviderConcurrency(name, () =>
-      provider.generate({ promptEn: prompt, aspectRatio: '16:9' }),
+      provider.generate({ promptEn: prompt, aspectRatio: '16:9', seed }),
     )
     const previousImage = scene.imageBasePath
     const key = storage.sceneAsset('image', scene.projectId, id, 'ai', result.format)
@@ -302,7 +320,8 @@ export async function generateSceneImage(id: string, body: z.infer<typeof Genera
       where: { id },
       data: { imageBasePath: key, status: 'image_ready', lastError: null },
     })
-    if (previousImage !== null && previousImage !== key) storage.delete(previousImage)
+    if (previousImage !== null && previousImage !== key) await recordAssetVersion(id, 'image', previousImage, {})
+    await recordAssetVersion(id, 'image', key, { provider: name, prompt, meta: { format: result.format, ...(seed !== undefined ? { seed } : {}) } })
     await db.project.updateMany({ where: { id: scene.projectId, status: 'storyboard_ready' }, data: { status: 'in_production' } })
     return await getScene(id)
   } catch (err) {
@@ -320,7 +339,8 @@ export async function uploadSceneImage(id: string, file: { buffer: Buffer; ext: 
   const key = storage.sceneAsset('image', scene.projectId, id, 'upload', file.ext)
   storage.save(key, file.buffer)
   await db.scene.update({ where: { id }, data: { imageBasePath: key, status: 'image_ready', lastError: null } })
-  if (previousImage !== null && previousImage !== key) storage.delete(previousImage)
+  if (previousImage !== null && previousImage !== key) await recordAssetVersion(id, 'image', previousImage, {})
+  await recordAssetVersion(id, 'image', key, { provider: 'upload' })
   await db.project.updateMany({ where: { id: scene.projectId, status: 'storyboard_ready' }, data: { status: 'in_production' } })
   return getScene(id)
 }
@@ -330,8 +350,12 @@ export async function deleteSceneAsset(id: string, kind: 'image' | 'video' | 'au
   assertNoPending(scene)
   const field = kind === 'image' ? 'imageBasePath' : kind === 'video' ? 'videoClipPath' : 'audioPath'
   const current = (scene as unknown as Record<string, string | null>)[field] ?? null
+  const versions = await db.sceneAssetVersion.findMany({ where: { sceneId: id, kind } })
+  const keys = new Set(versions.map((v) => v.storageKey))
+  if (current !== null) keys.add(current)
+  for (const key of keys) storage.delete(key)
+  await db.sceneAssetVersion.deleteMany({ where: { sceneId: id, kind } })
   if (current !== null) {
-    storage.delete(current)
     const data: Record<string, unknown> = { [field]: null }
     if (kind === 'video') data.videoEffectiveSeconds = null
     if (kind === 'audio') data.audioDurationSeconds = null
@@ -352,6 +376,7 @@ export async function generateSceneVideo(id: string, body: z.infer<typeof Genera
   }
   assertNoPending(scene)
   const { provider, name } = await getVideoProvider(body.providerOverride, project.videoProvider)
+  const seed = body.seed ?? scene.seed ?? project.visualSeed ?? undefined
   const caps = provider.capabilities()
   const requested = body.durationSeconds ?? scene.durationSeconds
   const effective = mapDuration(requested, caps)
@@ -377,6 +402,7 @@ export async function generateSceneVideo(id: string, body: z.infer<typeof Genera
     resolution: project.outputResolution as '720p' | '1080p',
     imageAbsPath: storage.abs(scene.imageBasePath),
     referenceImageAbsPaths: refAbsPaths,
+    ...(seed !== undefined ? { seed } : {}),
   })
   return getScene(id)
 }
@@ -423,7 +449,8 @@ export async function generateSceneAudio(id: string, body: z.infer<typeof Genera
       where: { id },
       data: { audioPath: key, audioDurationSeconds: result.durationSeconds, status: 'audio_ready', lastError: null },
     })
-    if (previousAudio !== null && previousAudio !== key) storage.delete(previousAudio)
+    if (previousAudio !== null && previousAudio !== key) await recordAssetVersion(id, 'audio', previousAudio, {})
+    await recordAssetVersion(id, 'audio', key, { provider: name, meta: { durationSeconds: result.durationSeconds } })
     await db.project.updateMany({ where: { id: scene.projectId, status: 'storyboard_ready' }, data: { status: 'in_production' } })
     return getScene(id)
   } catch (err) {

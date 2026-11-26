@@ -15,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/airshot/atoms'
 import { ListOrVirtual } from '@/components/airshot/VirtualList'
+import { BatchPanel } from '@/components/airshot/molecules/BatchPanel'
 import { SceneCard } from '@/components/airshot/molecules/SceneCard'
 import { useGenerateStoryboard, useReferences, useReorderScenes, useRuntimeConfig, useScenes, useVoices } from '@/hooks/airshot'
 import type { ProjectResponse } from '@/lib/airshot-client/types'
@@ -122,6 +123,8 @@ export function StoryboardTab({ project }: { project: ProjectResponse }) {
           </div>
         </CardContent>
       </Card>
+
+      {scenes.length > 0 && <BatchPanel project={project} scenes={scenes} />}
 
       {scenesQuery.isLoading && (
         <div className="space-y-4">

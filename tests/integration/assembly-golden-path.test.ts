@@ -25,6 +25,7 @@ let storage: typeof import('@/lib/airshot/infrastructure/storage').storage
 let createAssemblyJob: typeof import('@/lib/airshot/services/jobs').createAssemblyJob
 
 const createdKeys: string[] = []
+const extraProjectIds: string[] = []
 let projectId = ''
 let sceneAId = ''
 let sceneBId = ''
@@ -45,7 +46,7 @@ function probeDims(absPath: string): { width: number; height: number } {
   return { width: parsed.streams[0].width, height: parsed.streams[0].height }
 }
 
-async function pollJob(jobId: string, timeoutMs = 60_000): Promise<{ status: string; outputPath: string | null; subtitlesPath: string | null; thumbnailPath: string | null; progress: string | null; errorMessage: string | null }> {
+async function pollJob(jobId: string, timeoutMs = 60_000): Promise<{ status: string; outputPath: string | null; subtitlesPath: string | null; subtitlesMethod: string | null; thumbnailPath: string | null; progress: string | null; errorMessage: string | null }> {
   const deadline = Date.now() + timeoutMs
   for (;;) {
     const job = await db.assemblyJob.findUniqueOrThrow({ where: { id: jobId } })
@@ -82,7 +83,7 @@ beforeAll(async () => {
 afterAll(async () => {
   if (storage !== undefined) {
     for (const key of createdKeys) storage.delete(key)
-    const jobs = await db?.assemblyJob.findMany({ where: { projectId } }).catch(() => []) ?? []
+    const jobs = await db?.assemblyJob.findMany({ where: { projectId: { in: [projectId, ...extraProjectIds] } } }).catch(() => []) ?? []
     for (const job of jobs) {
       storage.delete(job.outputPath)
       storage.delete(job.subtitlesPath)
@@ -144,6 +145,8 @@ describe.skipIf(!hasFfmpeg)('camino dorado del ensamblaje (FFmpeg real)', () => 
       expect(job.subtitlesPath).not.toBeNull()
       expect(job.thumbnailPath).not.toBeNull()
       expect(job.progress).not.toBeNull()
+      // sin whisper configurado el método se declara como estimado (no se finge)
+      expect(job.subtitlesMethod).toBe('estimated')
 
       // 1) salida real con el aspecto pedido
       const outputAbs = storage.abs(job.outputPath as string)
@@ -197,6 +200,67 @@ describe.skipIf(!hasFfmpeg)('camino dorado del ensamblaje (FFmpeg real)', () => 
     expect(job.status, job.errorMessage ?? undefined).toBe('completed')
     expect(storage.exists(job.outputPath)).toBe(true)
     expect(job.subtitlesPath).toBeNull()
+  })
+
+  it('ensambla escenas sin clip desde su imagen (Ken Burns) con transiciones y portada', async () => {
+    const stillProjectId = randomUUID()
+    extraProjectIds.push(stillProjectId)
+    const stillA = randomUUID()
+    const stillB = randomUUID()
+    const stillAssets = `uploads/__test__/${stillProjectId}`
+    const tmp = join(process.cwd(), 'tests', 'tmp-still')
+    rmSync(tmp, { recursive: true, force: true })
+    mkdirSync(tmp, { recursive: true })
+    try {
+      const imgA = join(tmp, 'a.png')
+      const imgB = join(tmp, 'b.png')
+      const narrA = join(tmp, 'na.wav')
+      const narrB = join(tmp, 'nb.wav')
+      ffmpeg(['-f', 'lavfi', '-i', 'testsrc=size=640x360:duration=1', '-frames:v', '1', imgA])
+      ffmpeg(['-f', 'lavfi', '-i', 'color=c=navy:size=480x640:duration=1', '-frames:v', '1', imgB])
+      ffmpeg(['-f', 'lavfi', '-i', 'sine=frequency=440:duration=2', '-ar', '48000', '-ac', '2', narrA])
+      ffmpeg(['-f', 'lavfi', '-i', 'sine=frequency=660:duration=2', '-ar', '48000', '-ac', '2', narrB])
+      const imgAKey = `${stillAssets}/still_a.png`
+      const imgBKey = `${stillAssets}/still_b.png`
+      const narrAKey = `${stillAssets}/narration_a.wav`
+      const narrBKey = `${stillAssets}/narration_b.wav`
+      writeAsset(imgAKey, imgA)
+      writeAsset(imgBKey, imgB)
+      writeAsset(narrAKey, narrA)
+      writeAsset(narrBKey, narrB)
+
+      await db.project.create({ data: { id: stillProjectId, title: 'still path', originalStory: 'escenas solo imagen', musicVolume: 0.25 } })
+      await db.scene.create({
+        data: { id: stillA, projectId: stillProjectId, orderIndex: 0, originalText: 'primera', narrationText: 'Primera escena solo imagen.', durationSeconds: 2, status: 'image_ready', imageBasePath: imgAKey, audioPath: narrAKey },
+      })
+      await db.scene.create({
+        data: { id: stillB, projectId: stillProjectId, orderIndex: 1, originalText: 'segunda', narrationText: 'Segunda escena solo imagen.', durationSeconds: 2, status: 'image_ready', imageBasePath: imgBKey, audioPath: narrBKey },
+      })
+
+      const jobId = await createAssemblyJob(stillProjectId, {
+        includeAudio: true,
+        musicVolume: 0.25,
+        aspect: '9:16',
+        subtitles: 'srt',
+        duckMusic: false,
+        coverSceneId: stillB,
+      })
+      const job = await pollJob(jobId)
+      expect(job.status, job.errorMessage ?? undefined).toBe('completed')
+      expect(job.subtitlesPath).not.toBeNull()
+      expect(job.thumbnailPath).not.toBeNull()
+
+      const dims = probeDims(storage.abs(job.outputPath as string))
+      expect(dims.width).toBe(720)
+      expect(dims.height).toBe(1280)
+      const srt = readFileSync(storage.abs(job.subtitlesPath as string), 'utf8')
+      expect(srt).toContain('Primera escena solo imagen.')
+      const thumb = readFileSync(storage.abs(job.thumbnailPath as string))
+      expect(thumb[0]).toBe(0xff)
+      expect(thumb[1]).toBe(0xd8)
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
   })
 
   it('reintenta un job failed creando uno nuevo con los mismos parámetros', async () => {

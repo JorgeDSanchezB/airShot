@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState, StatusChip } from '@/components/airshot/atoms'
 import { StoryboardTab } from '@/components/airshot/organisms/tabs/StoryboardTab'
+import { TimelineTab } from '@/components/airshot/organisms/tabs/TimelineTab'
 import { ReferencesTab } from '@/components/airshot/organisms/tabs/ReferencesTab'
 import { AudioTab } from '@/components/airshot/organisms/tabs/AudioTab'
 import { AssemblyTab } from '@/components/airshot/organisms/tabs/AssemblyTab'
@@ -88,6 +89,7 @@ export function WorkspaceView() {
           <Tabs value={tab} onValueChange={(value) => setTab(value as typeof tab)}>
             <TabsList className="h-auto gap-1 rounded-full bg-secondary/60 p-1">
               <TabsTrigger value="storyboard" className={TAB_TRIGGER_CLASS}>Storyboard</TabsTrigger>
+              <TabsTrigger value="timeline" className={TAB_TRIGGER_CLASS}>Timeline</TabsTrigger>
               <TabsTrigger value="references" className={TAB_TRIGGER_CLASS}>Referencias</TabsTrigger>
               <TabsTrigger value="audio" className={TAB_TRIGGER_CLASS}>Audio</TabsTrigger>
               <TabsTrigger value="assembly" className={TAB_TRIGGER_CLASS}>Ensamblaje</TabsTrigger>
@@ -95,6 +97,11 @@ export function WorkspaceView() {
             <TabsContent value="storyboard" className="mt-4">
               <motion.div variants={tabVariants} initial="hidden" animate="show">
                 <StoryboardTab project={project} />
+              </motion.div>
+            </TabsContent>
+            <TabsContent value="timeline" className="mt-4">
+              <motion.div variants={tabVariants} initial="hidden" animate="show">
+                <TimelineTab project={project} />
               </motion.div>
             </TabsContent>
             <TabsContent value="references" className="mt-4">

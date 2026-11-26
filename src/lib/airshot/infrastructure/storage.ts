@@ -96,8 +96,12 @@ export class StorageService {
     return `outputs/projects/${projectId}/assemblies/${jobId}/final.mp4`
   }
 
-  assemblySubtitles(projectId: string, jobId: string): string {
-    return `outputs/projects/${projectId}/assemblies/${jobId}/subtitles.srt`
+  assemblySubtitles(projectId: string, jobId: string, language?: string): string {
+    return `outputs/projects/${projectId}/assemblies/${jobId}/subtitles${language === undefined ? '' : `.${language}`}.srt`
+  }
+
+  translationAudio(projectId: string, language: string, sceneId: string, ext: string): string {
+    return `outputs/projects/${projectId}/translations/${language}/${sceneId}_${Date.now()}_${randomUUID().slice(0, 8)}.${ext}`
   }
 
   assemblyThumbnail(projectId: string, jobId: string): string {
@@ -106,6 +110,18 @@ export class StorageService {
 
   reportOutput(projectId: string, jobId: string): string {
     return `outputs/projects/${projectId}/${airshotConfig.audio_qa.earshot.report_dir}/${jobId}.json`
+  }
+
+  packageZip(projectId: string): string {
+    return `packages/projects/${projectId}/airshot-package_${Date.now()}.zip`
+  }
+
+  projectExport(projectId: string): string {
+    return `packages/projects/${projectId}/export_${Date.now()}.airshot`
+  }
+
+  databaseBackup(stamp: string): string {
+    return `backups/db/airshot_${stamp}.db`
   }
 }
 

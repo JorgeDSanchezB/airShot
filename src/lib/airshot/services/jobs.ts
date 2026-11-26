@@ -13,6 +13,8 @@ import { storage } from '@/lib/airshot/infrastructure/storage'
 import { assembleProject } from '@/lib/airshot/infrastructure/assembly'
 import type { SubtitleMode } from '@/lib/airshot/infrastructure/assembly'
 import { incCounter, observeDurationSeconds } from '@/lib/airshot/core/metrics'
+import { timelineWindow } from '@/lib/airshot/domain/timeline'
+import { recordAssetVersion } from '@/lib/airshot/services/versions'
 import { getAudioQAProvider, getVideoProvider, withProviderConcurrency } from '@/lib/airshot/infrastructure/providers/factory'
 import type { VideoGenerationRequest } from '@/lib/airshot/infrastructure/providers/types'
 
@@ -86,6 +88,7 @@ export type SceneVideoJob = {
   resolution: '720p' | '1080p'
   imageAbsPath: string | null
   referenceImageAbsPaths: string[]
+  seed?: number
 }
 
 export function startSceneVideoJob(job: SceneVideoJob): void {
@@ -111,6 +114,7 @@ async function runSceneVideoJob(job: SceneVideoJob): Promise<void> {
       imageAbsPath: job.imageAbsPath,
       referenceImageAbsPaths: job.referenceImageAbsPaths,
       resolution: job.resolution,
+      ...(job.seed !== undefined ? { seed: job.seed } : {}),
     }
     const result = await withProviderConcurrency(job.providerName, () => provider.generate(request))
     const scene = await db.scene.findUnique({ where: { id: job.sceneId } })
@@ -127,13 +131,18 @@ async function runSceneVideoJob(job: SceneVideoJob): Promise<void> {
         videoClipPath: clipKey,
         videoProviderJobId: result.providerJobId,
         videoEffectiveSeconds: result.effectiveDurationSeconds,
+        trimStartSeconds: null,
+        trimEndSeconds: null,
         status: 'video_ready',
         lastError: null,
       },
     })
-    if (previousClip !== null && previousClip !== clipKey) {
-      storage.delete(previousClip)
-    }
+    if (previousClip !== null && previousClip !== clipKey) await recordAssetVersion(scene.id, 'video', previousClip, {})
+    await recordAssetVersion(scene.id, 'video', clipKey, {
+      provider: job.providerName,
+      prompt: job.promptEn,
+      meta: { effectiveSeconds: result.effectiveDurationSeconds },
+    })
     await db.project.updateMany({ where: { id: scene.projectId, status: 'storyboard_ready' }, data: { status: 'in_production' } })
     logger.info('job.scene_video.completed', {
       sceneId: job.sceneId,
@@ -163,6 +172,8 @@ export type AssemblyOptions = {
   subtitles: SubtitleMode
   duckMusic: boolean
   coverSceneId: string | null
+  audioLanguage?: string | null
+  subtitleLanguages?: string[]
 }
 
 export async function createAssemblyJob(
@@ -180,17 +191,41 @@ export async function createAssemblyJob(
   if (params.coverSceneId !== null && !scenes.some((s) => s.id === params.coverSceneId)) {
     throw new AppError('VALIDATION_ERROR', `coverSceneId ${params.coverSceneId} no pertenece al proyecto`, { field: 'coverSceneId' })
   }
-  const incomplete = scenes.filter(
-    (s) => s.videoClipPath === null || (params.includeAudio && airshotConfig.assembly.require_audio && s.audioPath === null),
-  )
+  const incomplete = scenes.filter((s) => {
+    const hasVisual = s.videoClipPath !== null || (airshotConfig.assembly.still_image.enabled && s.imageBasePath !== null)
+    return !hasVisual || (params.includeAudio && airshotConfig.assembly.require_audio && s.audioPath === null)
+  })
   if (incomplete.length > 0) {
-    throw new AppError('ASSEMBLY_INCOMPLETE_SCENES', `${incomplete.length} escena(s) incompletas (clips de vídeo${params.includeAudio && airshotConfig.assembly.require_audio ? ' o narración' : ''})`, {
+    throw new AppError('ASSEMBLY_INCOMPLETE_SCENES', `${incomplete.length} escena(s) incompletas (clips de vídeo o imagen${params.includeAudio && airshotConfig.assembly.require_audio ? ', o narración' : ''})`, {
       projectId,
-      hints: incomplete.slice(0, 8).map((s) => `Escena orderIndex=${s.orderIndex}: ${s.videoClipPath === null ? 'sin clip' : 'sin narración'}`),
+      hints: incomplete.slice(0, 8).map((s) => `Escena orderIndex=${s.orderIndex}: ${s.videoClipPath === null && s.imageBasePath === null ? 'sin clip ni imagen' : 'sin narración'}`),
     })
   }
   if (scenes.length === 0) {
     throw new AppError('ASSEMBLY_INCOMPLETE_SCENES', 'el proyecto no tiene escenas', { projectId })
+  }
+
+  const audioLanguage = params.audioLanguage ?? null
+  const subtitleLanguages = [...new Set(params.subtitleLanguages ?? [])]
+  if (audioLanguage !== null || subtitleLanguages.length > 0) {
+    const rows = await db.sceneTranslation.findMany({ where: { sceneId: { in: scenes.map((s) => s.id) } } })
+    const languages = [...new Set([...(audioLanguage !== null ? [audioLanguage] : []), ...subtitleLanguages])]
+    for (const language of languages) {
+      const languageRows = rows.filter((row) => row.language === language)
+      if (languageRows.length === 0) {
+        throw new AppError('VALIDATION_ERROR', `no hay traducciones para «${language}» (traduce el proyecto primero)`, { projectId, field: 'audioLanguage', hints: ['POST /projects/{id}/translations antes de ensamblar con ese idioma'] })
+      }
+      if (audioLanguage === language && params.includeAudio) {
+        const withAudio = new Set(languageRows.filter((row) => row.audioPath !== null).map((row) => row.sceneId))
+        const missing = scenes.filter((scene) => !withAudio.has(scene.id))
+        if (missing.length > 0) {
+          throw new AppError('ASSEMBLY_INCOMPLETE_SCENES', `${missing.length} escena(s) sin doblaje «${language}» (falta audio TTS del idioma)`, {
+            projectId,
+            hints: missing.slice(0, 8).map((scene) => `Escena orderIndex=${scene.orderIndex}: sin audio en ${language}`),
+          })
+        }
+      }
+    }
   }
 
   const jobId = randomUUID()
@@ -217,6 +252,8 @@ export async function createAssemblyJob(
           subtitles: params.subtitles,
           duckMusic: params.duckMusic,
           coverSceneId: params.coverSceneId,
+          audioLanguage,
+          subtitleLanguages,
           fps: airshotConfig.assembly.output_fps,
           codec: airshotConfig.assembly.video_codec,
           sceneIds: scenes.map((s) => s.id),
@@ -262,14 +299,35 @@ async function runAssemblyJob(jobId: string): Promise<void> {
     subtitles?: SubtitleMode
     duckMusic?: boolean
     coverSceneId?: string | null
+    audioLanguage?: string | null
+    subtitleLanguages?: string[]
   }
-  const outcome = await assembleProject(job.projectId, jobId, scenes.map((s) => ({
-    sceneId: s.id,
-    videoClipPath: s.videoClipPath ?? '',
-    audioPath: s.audioPath,
-    durationSeconds: s.durationSeconds,
-    subtitleText: s.narrationText ?? s.improvedText ?? s.originalText,
-  })), {
+  const audioLanguage = raw.audioLanguage ?? null
+  const translationRows = audioLanguage !== null || (raw.subtitleLanguages ?? []).length > 0
+    ? await db.sceneTranslation.findMany({ where: { sceneId: { in: scenes.map((s) => s.id) } } })
+    : []
+  const translationTextByScene = new Map<string, Record<string, string>>()
+  const translationAudioByScene = new Map<string, string>()
+  for (const row of translationRows) {
+    const texts = translationTextByScene.get(row.sceneId) ?? {}
+    texts[row.language] = row.text
+    translationTextByScene.set(row.sceneId, texts)
+    if (row.audioPath !== null) translationAudioByScene.set(`${row.sceneId}|${row.language}`, row.audioPath)
+  }
+  const outcome = await assembleProject(job.projectId, jobId, scenes.map((s) => {
+    const window = timelineWindow(s)
+    const dubbedAudio = audioLanguage !== null ? translationAudioByScene.get(`${s.id}|${audioLanguage}`) : undefined
+    return {
+      sceneId: s.id,
+      videoClipPath: s.videoClipPath,
+      imagePath: s.imageBasePath,
+      audioPath: dubbedAudio ?? s.audioPath,
+      durationSeconds: window.durationSeconds,
+      trimStartSeconds: window.startSeconds,
+      subtitleText: s.narrationText ?? s.improvedText ?? s.originalText,
+      translations: translationTextByScene.get(s.id) ?? {},
+    }
+  }), {
     includeAudio: raw.includeAudio,
     musicAssetKey: raw.musicAssetKey,
     musicVolume: raw.musicVolume,
@@ -278,6 +336,8 @@ async function runAssemblyJob(jobId: string): Promise<void> {
     subtitles: raw.subtitles ?? 'none',
     duckMusic: raw.duckMusic ?? false,
     coverSceneId: raw.coverSceneId ?? null,
+    audioLanguage,
+    subtitleLanguages: raw.subtitleLanguages ?? [],
   }, {
     onProgress: async (progress) => {
       await db.assemblyJob.update({ where: { id: jobId }, data: { progress: JSON.stringify(progress) } })
@@ -290,6 +350,9 @@ async function runAssemblyJob(jobId: string): Promise<void> {
         status: 'completed',
         outputPath: outcome.outputPath,
         subtitlesPath: outcome.subtitlesPath,
+        subtitlesMethod: outcome.subtitlesMethod,
+        subtitlesTracks: JSON.stringify(outcome.subtitlesTracks),
+        audioLanguage,
         thumbnailPath: outcome.thumbnailPath,
         progress: JSON.stringify({ stage: 'done', done: 1, total: 1 }),
         finishedAt: new Date(),
@@ -332,6 +395,8 @@ export async function retryAssemblyJob(jobId: string): Promise<string> {
     subtitles?: SubtitleMode
     duckMusic?: boolean
     coverSceneId?: string | null
+    audioLanguage?: string | null
+    subtitleLanguages?: string[]
     features?: Array<'naturalness' | 'sync' | 'loudness' | 'artifacts'>
     generateSfx?: boolean
   }
@@ -343,6 +408,8 @@ export async function retryAssemblyJob(jobId: string): Promise<string> {
       subtitles: raw.subtitles ?? 'none',
       duckMusic: raw.duckMusic ?? false,
       coverSceneId: raw.coverSceneId ?? null,
+      audioLanguage: raw.audioLanguage ?? null,
+      subtitleLanguages: raw.subtitleLanguages ?? [],
     })
   }
   if (job.jobType === 'audio_qa') {

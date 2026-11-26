@@ -35,6 +35,7 @@ export function SettingsDialog({
   const [styleId, setStyleId] = useState(project.visualStyleId ?? '__none')
   const [resolution, setResolution] = useState(project.outputResolution)
   const [voiceId, setVoiceId] = useState(project.voiceId ?? '__default')
+  const [seed, setSeed] = useState(project.visualSeed !== null ? String(project.visualSeed) : '')
 
   const styleItems = styles.data?.pages.flatMap((p) => p.items) ?? []
   const voiceItems = voices.data?.pages.flatMap((p) => p.items) ?? []
@@ -112,6 +113,17 @@ export function SettingsDialog({
             </Select>
             <p className="font-mono text-[10px] text-muted-foreground">escena → proyecto → default del proveedor</p>
           </div>
+          <div className="space-y-1">
+            <Label htmlFor="proj-seed" className="text-xs text-muted-foreground">Semilla visual (opcional)</Label>
+            <Input
+              id="proj-seed"
+              inputMode="numeric"
+              placeholder="p. ej. 20261126 — vacío = aleatoria"
+              value={seed}
+              onChange={(e) => setSeed(e.target.value.replace(/[^0-9]/g, ''))}
+            />
+            <p className="font-mono text-[10px] text-muted-foreground">se envía a los proveedores que la soportan (ComfyUI, vídeo externo); cada escena puede sobrescribirla</p>
+          </div>
         </div>
         <DialogFooter>
           <Button
@@ -126,6 +138,7 @@ export function SettingsDialog({
                   visualStyleId: styleId === '__none' ? null : styleId,
                   outputResolution: resolution,
                   voiceId: voiceId === '__default' ? null : voiceId,
+                  visualSeed: seed.trim().length > 0 ? Number(seed) : null,
                 },
               }).then(() => {
                 onSaved()

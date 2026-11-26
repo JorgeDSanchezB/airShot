@@ -4,16 +4,16 @@
 // (signature moment: timecode vivo 24fps + playhead) + pipeline full-bleed +
 // lista infinita de proyectos con entrada escalonada (framer-motion).
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { formatDistanceToNow } from 'date-fns'
 import { es } from 'date-fns/locale'
-import { Clapperboard, Film, LayoutGrid, MoveDiagonal, Plus, Trash2, Wand2 } from 'lucide-react'
+import { Clapperboard, Download, Film, LayoutGrid, MoveDiagonal, Plus, Trash2, Upload, Wand2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { EmptyState, StatusChip } from '@/components/airshot/atoms'
 import { ProjectFormDialog } from '@/components/airshot/molecules/forms'
-import { useDeleteProject, useProjects, useStyles, useVoices, useRuntimeConfig } from '@/hooks/airshot'
+import { useDeleteProject, useExportProject, useImportProject, useProjects, useStyles, useVoices, useRuntimeConfig } from '@/hooks/airshot'
 import { useWorkspace } from '@/stores/workspace'
 
 const PIPELINE: Array<{ step: string; label: string; icon: React.ComponentType<{ className?: string }> }> = [
@@ -160,7 +160,11 @@ export function ProjectsView() {
   const voices = useVoices()
   const openProject = useWorkspace((s) => s.openProject)
   const deleteProject = useDeleteProject()
+  const exportProject = useExportProject()
+  const importProject = useImportProject()
+  const importInputRef = useRef<HTMLInputElement | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
+  const includeMedia = runtime.data?.transfer.include_media_default ?? true
 
   const projects = data?.pages.flatMap((page) => page.items) ?? []
 
@@ -168,11 +172,29 @@ export function ProjectsView() {
     <div className="space-y-8">
       <Hero onCreate={() => setCreateOpen(true)} sceneCount={projects[0]?.sceneCount ?? null} />
 
-      <div className="flex items-baseline justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="font-display text-lg font-semibold tracking-tight">Proyectos</h2>
-        <span className="slug font-mono text-[10px] text-muted-foreground">
-          {isLoading ? 'cargando…' : `${projects.length}${hasNextPage ? '+' : ''} en el estudio`}
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="slug font-mono text-[10px] text-muted-foreground">
+            {isLoading ? 'cargando…' : `${projects.length}${hasNextPage ? '+' : ''} en el estudio`}
+          </span>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".airshot,application/zip"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (file !== undefined) {
+                void importProject.mutateAsync(file).then((result) => openProject(result.projectId))
+              }
+              e.target.value = ''
+            }}
+          />
+          <Button size="sm" variant="outline" className="gap-1" disabled={importProject.isPending} onClick={() => importInputRef.current?.click()}>
+            <Upload className="size-3" /> {importProject.isPending ? 'Importando…' : 'Importar .airshot'}
+          </Button>
+        </div>
       </div>
 
       {isError && <p className="text-sm text-destructive">No se pudo listar proyectos.</p>}
@@ -229,19 +251,34 @@ export function ProjectsView() {
                     <span className="text-[11px] text-muted-foreground">
                       {formatDistanceToNow(new Date(project.createdAt), { addSuffix: true, locale: es })}
                     </span>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 gap-1 text-destructive opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (window.confirm(`¿Borrar «${project.title}» y todos sus assets?`)) {
-                          void deleteProject.mutateAsync(project.id)
-                        }
-                      }}
-                    >
-                      <Trash2 className="size-3" /> Borrar
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 gap-1 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
+                        disabled={exportProject.isPending}
+                        title={includeMedia ? 'Incluye imágenes, clips, narración y música' : 'Solo estructura (sin media)'}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          void exportProject.mutateAsync({ id: project.id, includeMedia })
+                        }}
+                      >
+                        <Download className="size-3" /> .airshot
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 gap-1 text-destructive opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (window.confirm(`¿Borrar «${project.title}» y todos sus assets?`)) {
+                            void deleteProject.mutateAsync(project.id)
+                          }
+                        }}
+                      >
+                        <Trash2 className="size-3" /> Borrar
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </CardContent>

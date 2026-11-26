@@ -23,6 +23,7 @@ import {
   OpenAICompatTTSProvider,
 } from '@/lib/airshot/infrastructure/providers/external'
 import { EarshotAudioQAProvider } from '@/lib/airshot/infrastructure/providers/earshot'
+import { ComfyUIImageProvider, PiperTTSProvider } from '@/lib/airshot/infrastructure/providers/local'
 
 type Creds = { name: string; entry: ReturnType<typeof getRegistryEntry> & object; apiKey: string | null; baseUrl: string | null; defaultParams: Record<string, unknown> }
 
@@ -134,6 +135,7 @@ export async function getTTSProvider(override?: string | null, projectValue?: st
     case 'zai-tts': provider = new ZaiTTSProvider(name, entry, creds.defaultParams); break
     case 'openai-compat-tts': provider = new OpenAICompatTTSProvider(name, entry, creds.apiKey, creds.baseUrl ?? entry.base_url ?? '', creds.defaultParams); break
     case 'elevenlabs-tts': provider = new ElevenLabsTTSProvider(name, entry, creds.apiKey ?? '', creds.baseUrl ?? entry.base_url ?? '', creds.defaultParams); break
+    case 'piper-tts': provider = new PiperTTSProvider(name, entry, creds.defaultParams); break
     default: throw new AppError('PROVIDER_NOT_CONFIGURED', `adaptador TTS desconocido "${entry.adapter}"`, { provider: name })
   }
   return { provider, name }
@@ -153,7 +155,9 @@ export async function getImageProvider(override?: string | null): Promise<{ prov
   const creds = await resolveCredentials('image', name, entry)
   const provider: ImageProvider = entry.adapter === 'zai-image'
     ? new ZaiImageProvider(name, entry, creds.defaultParams)
-    : new OpenAICompatImageProvider(name, entry, creds.apiKey ?? '', creds.baseUrl ?? entry.base_url ?? '', creds.defaultParams)
+    : entry.adapter === 'comfyui'
+      ? new ComfyUIImageProvider(name, entry, creds.defaultParams)
+      : new OpenAICompatImageProvider(name, entry, creds.apiKey ?? '', creds.baseUrl ?? entry.base_url ?? '', creds.defaultParams)
   return { provider, name }
 }
 

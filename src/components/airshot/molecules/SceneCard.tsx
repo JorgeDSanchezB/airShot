@@ -11,6 +11,7 @@ import React, { useRef, useState } from 'react'
 import {
   ChevronDown,
   ChevronUp,
+  History,
   ImageIcon,
   Film,
   Mic,
@@ -42,6 +43,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { DurationSlider, ErrorNotice, StatusChip } from '@/components/airshot/atoms'
 import type { ProjectResponse, ReferenceResponse, RuntimeConfig, SceneResponse, VoiceInfo } from '@/lib/airshot-client/types'
 import {
@@ -52,6 +54,8 @@ import {
   useGenerateSceneVideo,
   usePatchScene,
   usePutSceneReferences,
+  useRestoreSceneVersion,
+  useSceneVersions,
   useUploadSceneImage,
 } from '@/hooks/airshot'
 
@@ -69,6 +73,7 @@ function SceneCardImpl({ scene, project, config, voices, references, onMoveUp, o
   const [promptDraft, setPromptDraft] = useState<string | null>(null)
   const [customText, setCustomText] = useState<string | null>(null)
   const [assignOpen, setAssignOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
   const [assignDraft, setAssignDraft] = useState<Array<{ referenceId: string; kind: 'subject' | 'environment' }>>(scene.references)
   const imageInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -82,6 +87,8 @@ function SceneCardImpl({ scene, project, config, voices, references, onMoveUp, o
   const deleteAssetVideo = useDeleteSceneAsset('video')
   const deleteAssetAudio = useDeleteSceneAsset('audio')
   const putReferences = usePutSceneReferences()
+  const versions = useSceneVersions(scene.id, historyOpen)
+  const restoreVersion = useRestoreSceneVersion()
 
   const min = config?.scene.min_duration_seconds ?? 4
   const max = config?.scene.max_duration_seconds ?? 15
@@ -349,6 +356,41 @@ function SceneCardImpl({ scene, project, config, voices, references, onMoveUp, o
             Asignar
           </Button>
         </div>
+
+        <Collapsible open={historyOpen} onOpenChange={setHistoryOpen}>
+          <Separator />
+          <CollapsibleTrigger asChild>
+            <Button size="sm" variant="ghost" className="mt-2 gap-1 text-xs text-muted-foreground">
+              <History className="size-3" /> Historial de assets ({versions.data?.items.length ?? 0})
+              <ChevronDown className={`size-3 transition-transform ${historyOpen ? 'rotate-180' : ''}`} />
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-1.5 pt-2">
+            {versions.isLoading && <p className="text-xs text-muted-foreground">cargando historial…</p>}
+            {versions.data?.items.length === 0 && <p className="text-xs text-muted-foreground">Sin versiones todavía: cada regeneración conserva la anterior.</p>}
+            {versions.data?.items.map((version) => (
+              <div key={version.id} className="flex flex-wrap items-center gap-2 rounded-md border p-1.5">
+                <Badge variant="outline" className="font-mono text-[10px]">{version.kind}</Badge>
+                <span className="text-xs">{version.provider ?? '—'}</span>
+                <span className="slug ml-auto font-mono text-[10px] text-muted-foreground">
+                  {new Date(version.createdAt).toLocaleString('es-EC', { dateStyle: 'short', timeStyle: 'short' })}
+                </span>
+                {version.url !== null && (
+                  <a href={version.url} target="_blank" rel="noreferrer" className="text-[10px] underline underline-offset-2">ver</a>
+                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-6 px-1.5 text-[10px]"
+                  disabled={restoreVersion.isPending || busy}
+                  onClick={() => void restoreVersion.mutateAsync({ sceneId: scene.id, versionId: version.id })}
+                >
+                  Restaurar
+                </Button>
+              </div>
+            ))}
+          </CollapsibleContent>
+        </Collapsible>
 
         <div className="flex justify-end">
           <Button size="sm" variant="ghost" className="gap-1 text-destructive" onClick={() => void deleteScene.mutateAsync(scene)}>

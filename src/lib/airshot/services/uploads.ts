@@ -64,6 +64,29 @@ export async function readUpload(req: NextRequest, kind: UploadKind, fieldName =
   return { buffer, mime, ext }
 }
 
+/** Archivo .airshot (import de proyecto): el tope es transfer.max_archive_bytes. */
+export async function readArchive(req: NextRequest): Promise<Buffer> {
+  const limit = airshotConfig.transfer.max_archive_bytes
+  const contentLength = Number(req.headers.get('content-length') ?? '0')
+  if (contentLength > limit) {
+    throw new AppError('PAYLOAD_TOO_LARGE', `el .airshot (${contentLength} bytes) supera transfer.max_archive_bytes=${limit}`)
+  }
+  let form: FormData
+  try {
+    form = await req.formData()
+  } catch {
+    throw new AppError('VALIDATION_ERROR', 'multipart malformado')
+  }
+  const file = form.get('file')
+  if (!(file instanceof File)) {
+    throw new AppError('VALIDATION_ERROR', 'campo de subida "file" ausente o no es archivo', { field: 'file' })
+  }
+  if (file.size > limit) {
+    throw new AppError('PAYLOAD_TOO_LARGE', `el .airshot (${file.size} bytes) supera transfer.max_archive_bytes=${limit}`)
+  }
+  return Buffer.from(await file.arrayBuffer())
+}
+
 function sniffMime(file: File): string {
   const name = file.name.toLowerCase()
   if (name.endsWith('.png')) return 'image/png'

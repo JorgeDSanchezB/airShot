@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { EmptyState } from '@/components/airshot/atoms'
 import { ListOrVirtual } from '@/components/airshot/VirtualList'
+import { ConsistencyPanel } from '@/components/airshot/molecules/ConsistencyPanel'
 import { ReferenceCard } from '@/components/airshot/molecules/ReferenceCard'
 import { ReferenceFormDialog } from '@/components/airshot/molecules/forms'
 import { useReferences, useRuntimeConfig } from '@/hooks/airshot'
@@ -64,6 +65,8 @@ export function ReferencesTab({ project }: { project: ProjectResponse }) {
           </Button>
         </div>
       </div>
+
+      <ConsistencyPanel project={project} />
 
       <div className="flex flex-wrap items-center gap-2">
         <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar…" className="h-8 w-56 text-xs" />

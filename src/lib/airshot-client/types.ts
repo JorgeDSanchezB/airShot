@@ -47,6 +47,7 @@ export type ProjectResponse = {
   outputFormat: string
   outputResolution: string
   voiceId: string | null
+  visualSeed: number | null
   musicAssetKey: string | null
   musicUrl: string | null
   musicVolume: number
@@ -66,6 +67,9 @@ export type SceneResponse = {
   improvedText: string | null
   promptEn: string | null
   durationSeconds: number
+  seed: number | null
+  trimStartSeconds: number | null
+  trimEndSeconds: number | null
   narrationSource: string
   narrationText: string | null
   voiceId: string | null
@@ -82,6 +86,18 @@ export type SceneResponse = {
   references: Array<{ referenceId: string; kind: 'subject' | 'environment' }>
   createdAt: string
   updatedAt: string
+}
+
+export type SceneAssetVersion = {
+  id: string
+  sceneId: string
+  kind: 'image' | 'video' | 'audio'
+  storageKey: string
+  url: string | null
+  provider: string | null
+  prompt: string | null
+  meta: Record<string, unknown>
+  createdAt: string
 }
 
 export type ReferenceImageEntryDto = {
@@ -140,6 +156,9 @@ export type AssemblyJobResponse = {
   outputPath: string | null
   outputUrl: string | null
   subtitlesUrl: string | null
+  subtitlesMethod: 'whisper' | 'estimated' | 'mixed' | null
+  subtitlesTracks: Array<{ language: string; path: string; url: string }>
+  audioLanguage: string | null
   thumbnailUrl: string | null
   progress: AssemblyProgress | null
   report: Record<string, unknown> | null
@@ -156,6 +175,122 @@ export type OpsSummary = {
   scenes: { pending: number }
   disk: { freeBytes: number; totalBytes: number } | null
   recentFailed: Array<{ id: string; projectId: string; jobType: string; status: string; code: string | null; createdAt: string }>
+}
+
+export type ConsistencyFinding = {
+  code: string
+  severity: 'info' | 'warning'
+  detail: string
+  sceneId?: string
+  referenceId?: string
+}
+
+export type ConsistencyReport = {
+  generatedAt: string
+  totalScenes: number
+  assets: { image: number; audio: number; video: number }
+  score: number
+  characters: Array<{
+    referenceId: string
+    name: string
+    level: string
+    imageCount: number
+    hasPrimary: boolean
+    scenesReferenced: number
+    scenesMissing: Array<{ sceneId: string; orderIndex: number }>
+  }>
+  findings: ConsistencyFinding[]
+}
+
+export type LanguageSummary = {
+  language: string
+  scenes: number
+  audioReady: number
+  totalScenes: number
+}
+
+export type TranslationLanguagesResponse = {
+  items: LanguageSummary[]
+  totalScenes: number
+}
+
+export type LanguageAudioResult = {
+  language: string
+  generated: number
+  failed: number
+  audioReady: number
+  totalScenes: number
+  errors: Array<{ sceneId: string; code: string; detail: string }>
+}
+
+export type TransferExportResult = {
+  key: string
+  url: string
+  sizeBytes: number
+  format: 'airshot-project/1'
+  includesMedia: boolean
+  scenes: number
+  references: number
+  mediaFiles: number
+}
+
+export type TransferImportResult = {
+  projectId: string
+  title: string
+  scenes: number
+  references: number
+  mediaFiles: number
+  warnings: string[]
+}
+
+export type DatabaseBackupResult = {
+  key: string
+  url: string
+  sizeBytes: number
+  createdAt: string
+}
+
+export type MediaReport = {
+  scannedAt: string
+  totalFiles: number
+  totalBytes: number
+  referencedKeys: number
+  orphanFiles: number
+  orphanBytes: number
+  orphans: Array<{ key: string; sizeBytes: number }>
+}
+
+export type MediaGcResult = MediaReport & {
+  applied: boolean
+  deletedFiles: number
+  freedBytes: number
+}
+
+export type PublishResult = {
+  key: string
+  url: string
+  sizeBytes: number
+  aspects: string[]
+  metadata: { source: 'llm' | 'template'; title: string; description: string; hashtags: string[] }
+  createdAt: string
+}
+
+export type BatchStep = 'image' | 'audio' | 'video'
+export type BatchRunStatus = 'running' | 'paused' | 'cancelled' | 'completed'
+
+export type BatchRun = {
+  id: string
+  projectId: string
+  steps: BatchStep[]
+  regenerate: boolean
+  status: BatchRunStatus
+  total: number
+  done: number
+  skipped: number
+  currentSceneId: string | null
+  errors: Array<{ sceneId: string; step: BatchStep; code: string; detail: string }>
+  startedAt: string
+  finishedAt: string | null
 }
 
 export type VoiceInfo = {
@@ -193,8 +328,10 @@ export type RuntimeConfig = {
     image: { max_bytes: number; allowed_mime: string[] }
     music: { max_bytes: number; allowed_mime: string[] }
   }
+  transfer: { max_archive_bytes: number; include_media_default: boolean }
+  translation: { max_languages: number }
   media: { cache_max_age_seconds: number }
-  assembly: { require_audio: boolean; music_default_volume: number; output_fps: number; aspects: string[] }
+  assembly: { require_audio: boolean; music_default_volume: number; output_fps: number; aspects: string[]; hwaccel_enabled?: boolean }
   audio_qa: { enabled: boolean }
   providers: {
     video: string[]

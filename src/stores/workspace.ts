@@ -4,7 +4,7 @@
 import { create } from 'zustand'
 
 export type AppView = 'projects' | 'workspace' | 'library' | 'styles' | 'settings'
-export type WorkspaceTab = 'storyboard' | 'references' | 'audio' | 'assembly'
+export type WorkspaceTab = 'storyboard' | 'timeline' | 'references' | 'audio' | 'assembly'
 
 interface WorkspaceState {
   view: AppView

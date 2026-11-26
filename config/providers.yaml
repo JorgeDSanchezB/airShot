@@ -78,6 +78,15 @@ tts:
     backoff_base_seconds: 1.5
     max_concurrent: 2
     default_voice: null
+  piper:                                # TTS local sin nube (binario piper; modelo en defaultParams)
+    adapter: "piper-tts"
+    auth: "none"
+    base_url: null
+    timeout_seconds: 60
+    max_retries: 0
+    backoff_base_seconds: 1.0
+    max_concurrent: 1
+    default_voice: null
   elevenlabs:
     adapter: "elevenlabs-tts"
     auth: "api_key"
@@ -96,6 +105,15 @@ llm:
     timeout_seconds: 90
     max_retries: 2
     backoff_base_seconds: 2.0
+    max_concurrent: 1
+    default_temperature: 0.4
+  ollama:                               # LLM local OpenAI-compatible (Ollama)
+    adapter: "openai-compat-llm"
+    auth: "none"
+    base_url: "http://localhost:11434/v1"
+    timeout_seconds: 120
+    max_retries: 1
+    backoff_base_seconds: 1.0
     max_concurrent: 1
     default_temperature: 0.4
   openai_compat:
@@ -118,6 +136,14 @@ image:
     backoff_base_seconds: 2.0
     max_concurrent: 1
     landscape_size: "1344x768"         # preset 16:9 del proveedor
+  comfyui:                              # imagen local (workflow API en defaultParams.workflow)
+    adapter: "comfyui"
+    auth: "none"
+    base_url: "http://127.0.0.1:8188"
+    timeout_seconds: 180
+    max_retries: 0
+    backoff_base_seconds: 1.0
+    max_concurrent: 1
   openai_compat:
     adapter: "openai-compat-image"
     auth: "api_key"

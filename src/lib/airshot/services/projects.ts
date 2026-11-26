@@ -34,6 +34,7 @@ export async function createProject(body: z.infer<typeof CreateProjectRequest>):
       ttsProvider: settings.ttsProvider ?? airshotConfig.providers.default_tts,
       outputResolution: settings.outputResolution ?? '720p',
       voiceId: settings.voiceId ?? null,
+      visualSeed: settings.visualSeed ?? null,
       musicVolume: airshotConfig.assembly.music_default_volume,
       status: 'draft',
     },
@@ -101,7 +102,7 @@ export async function patchProject(id: string, body: z.infer<typeof PatchProject
   }
   // semántica ausente≠nulo: solo las claves presentes se aplican
   const data: Record<string, unknown> = {}
-  const keys = ['title', 'originalStory', 'improvedStory', 'visualStyleId', 'videoProvider', 'ttsProvider', 'outputResolution', 'voiceId', 'musicVolume'] as const
+  const keys = ['title', 'originalStory', 'improvedStory', 'visualStyleId', 'videoProvider', 'ttsProvider', 'outputResolution', 'voiceId', 'musicVolume', 'visualSeed'] as const
   for (const key of keys) {
     if (Object.prototype.hasOwnProperty.call(body, key)) {
       data[key] = (body as Record<string, unknown>)[key]

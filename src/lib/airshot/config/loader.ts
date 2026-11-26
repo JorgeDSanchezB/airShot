@@ -28,6 +28,11 @@ export const AppConfigSchema = z.object({
     default_page_size: z.number().int().min(1),
     max_page_size: z.number().int().min(1),
   }),
+  batch: z.object({
+    max_scenes: z.number().int().min(1),
+    pause_between_ms: z.number().int().min(0),
+    poll_ms: z.number().int().min(100),
+  }),
   story: z.object({
     max_title_length: z.number().int().min(1),
     max_original_story_length: z.number().int().min(1),
@@ -36,6 +41,8 @@ export const AppConfigSchema = z.object({
     min_duration_seconds: z.number().int().min(1),
     default_duration_seconds: z.number().int().min(1),
     max_duration_seconds: z.number().int().min(1),
+    min_trim_seconds: z.number().min(0.1),
+    asset_versions_max: z.number().int().min(1),
     max_scenes_per_project: z.number().int().min(1),
     prompt_max_length: z.number().int().min(1),
     composed_prompt_max_chars: z.number().int().min(1),
@@ -76,6 +83,13 @@ export const AppConfigSchema = z.object({
       allowed_mime: z.array(z.string()),
     }),
   }),
+  transfer: z.object({
+    max_archive_bytes: z.number().int().positive(),
+    include_media_default: z.boolean(),
+  }),
+  translation: z.object({
+    max_languages: z.number().int().positive(),
+  }),
   assembly: z.object({
     ffmpeg_path: z.string(),
     ffprobe_path: z.string(),
@@ -94,10 +108,30 @@ export const AppConfigSchema = z.object({
     subtitles: z.object({
       font_size: z.number().int().positive(),
       margin_v: z.number().int().min(0),
+      align: z.object({
+        enabled: z.boolean(),
+        command: z.string(),
+        model_path: z.string(),
+        language: z.string(),
+        max_cue_chars: z.number().int().min(8),
+        timeout_seconds: z.number().int().positive(),
+      }),
+    }),
+    transitions: z.object({
+      enabled: z.boolean(),
+      duration_seconds: z.number().min(0),
+    }),
+    still_image: z.object({
+      enabled: z.boolean(),
+      zoom: z.number().min(0).max(0.5),
     }),
     music_ducking: z.object({
       threshold: z.number().positive(),
       ratio: z.number().min(1),
+    }),
+    hwaccel: z.object({
+      enabled: z.boolean(),
+      preferred: z.array(z.string()),
     }),
   }),
   storage: z.object({
@@ -187,6 +221,10 @@ function parseYamlFile(file: string): unknown {
 
 function loadConfig(): AppConfig {
   const parsed = AppConfigSchema.parse(parseYamlFile('config.yaml'))
+  // Override operativo (tests y despliegues): la suite de integración usa un
+  // root aislado para que la GC de huérfanos nunca toque data/ real.
+  const envRoot = process.env.AIRSHOT_STORAGE_ROOT?.trim()
+  if (envRoot !== undefined && envRoot !== '') parsed.storage.root = envRoot
   // Reglas de coherencia del Anexo A (fail-fast en arranque):
   const maxUpload = Math.max(parsed.upload.image.max_bytes, parsed.upload.music.max_bytes)
   if (parsed.app.max_body_bytes < maxUpload) {

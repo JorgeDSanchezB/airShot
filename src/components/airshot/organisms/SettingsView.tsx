@@ -7,14 +7,14 @@
 
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { Activity, AudioWaveform, BrainCircuit, Image, KeyRound, Mic, Plus, RotateCcw, Trash2, Video } from 'lucide-react'
+import { Activity, AudioWaveform, BrainCircuit, DatabaseBackup, HardDrive, Image, KeyRound, Mic, Plus, RotateCcw, ScanSearch, Trash2, Video } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { StatusChip } from '@/components/airshot/atoms'
 import { ProviderConfigFormDialog } from '@/components/airshot/molecules/forms'
-import { useHealthDeep, useOpsSummary, useProviderConfigCrud, useProviderConfigs, useRetryAssembly, useRuntimeConfig } from '@/hooks/airshot'
+import { useBackupDatabase, useHealthDeep, useMediaGc, useMediaReport, useOpsSummary, useProviderConfigCrud, useProviderConfigs, useRetryAssembly, useRuntimeConfig } from '@/hooks/airshot'
 import type { ProviderConfigResponse } from '@/lib/airshot-client/types'
 
 const PROVIDER_TYPES = ['video', 'tts', 'llm', 'image', 'audio_qa'] as const
@@ -26,6 +26,13 @@ const TYPE_ICONS: Record<string, React.ComponentType<{ className?: string }>> = 
   llm: BrainCircuit,
   image: Image,
   audio_qa: AudioWaveform,
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`
+  return `${(bytes / 1024 ** 3).toFixed(2)} GB`
 }
 
 const gridVariants = {
@@ -45,6 +52,10 @@ export function SettingsView() {
   const health = useHealthDeep(true)
   const ops = useOpsSummary(true)
   const retry = useRetryAssembly()
+  const backup = useBackupDatabase()
+  const gc = useMediaGc()
+  const [scanMedia, setScanMedia] = useState(false)
+  const media = useMediaReport(scanMedia)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [formNonce, setFormNonce] = useState(0)
   const [editing, setEditing] = useState<ProviderConfigResponse | null>(null)
@@ -201,6 +212,66 @@ export function SettingsView() {
       <Card className="p-0">
         <CardContent className="space-y-3 p-5">
           <div>
+            <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-foreground/70">sqlite · media huérfana</p>
+            <h3 className="mt-1.5 font-display text-base font-semibold tracking-tight">Salud de datos</h3>
+          </div>
+          <p className="font-mono text-[10px] text-muted-foreground">
+            respaldo consistente con VACUUM INTO; la GC compara la BD con data/ (versiones antiguas cuentan como vivas).
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" className="gap-1" disabled={backup.isPending} onClick={() => void backup.mutateAsync()}>
+              <DatabaseBackup className="size-3" /> {backup.isPending ? 'Respaldando…' : 'Respaldar BD'}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1"
+              disabled={media.isFetching}
+              onClick={() => {
+                if (!scanMedia) setScanMedia(true)
+                else void media.refetch()
+              }}
+            >
+              <ScanSearch className="size-3" /> {media.isFetching ? 'Analizando…' : 'Analizar media'}
+            </Button>
+            {media.data !== undefined && media.data.orphanFiles > 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1 text-destructive"
+                disabled={gc.isPending}
+                onClick={() => {
+                  if (window.confirm(`¿Borrar ${media.data?.orphanFiles ?? 0} archivo(s) huérfano(s) y liberar ${formatBytes(media.data?.orphanBytes ?? 0)}?`)) {
+                    void gc.mutateAsync(true)
+                  }
+                }}
+              >
+                <Trash2 className="size-3" /> Borrar huérfanos
+              </Button>
+            )}
+          </div>
+          {media.data !== undefined && (
+            <div className="space-y-1.5 text-xs">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md px-2 py-1.5">
+                <span className="flex items-center gap-1 font-mono text-[10px]"><HardDrive className="size-3" aria-hidden /> {media.data.totalFiles} archivos · {formatBytes(media.data.totalBytes)}</span>
+                <span className="font-mono text-[10px] text-muted-foreground">referenciadas: {media.data.referencedKeys}</span>
+                <Badge variant="outline" className="font-mono text-[10px]">{media.data.orphanFiles} huérfanos · {formatBytes(media.data.orphanBytes)}</Badge>
+              </div>
+              {media.data.orphans.slice(0, 8).map((orphan) => (
+                <p key={orphan.key} className="flex items-center gap-2 truncate rounded px-2 font-mono text-[10px] text-muted-foreground" title={orphan.key}>
+                  <span className="truncate">{orphan.key}</span>
+                  <span className="ml-auto shrink-0">{formatBytes(orphan.sizeBytes)}</span>
+                </p>
+              ))}
+              {media.data.orphanFiles === 0 && <p className="font-mono text-[10px] text-muted-foreground">sin huérfanos: la BD y data/ están sincronizadas.</p>}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="p-0">
+        <CardContent className="space-y-3 p-5">
+          <div>
             <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-foreground/70">GET /config · runtime</p>
             <h3 className="mt-1.5 font-display text-base font-semibold tracking-tight">Límites efectivos</h3>
           </div>
@@ -213,6 +284,7 @@ export function SettingsView() {
               <p className="rounded-md px-2 py-1.5 transition-colors hover:bg-secondary/50"><span className="font-mono">scene_reference:</span> {runtime.data.scene_reference.max_subjects_per_scene} subj / {runtime.data.scene_reference.max_environments_per_scene} env</p>
               <p className="rounded-md px-2 py-1.5 transition-colors hover:bg-secondary/50"><span className="font-mono">pagination:</span> {runtime.data.pagination.default_page_size} (máx {runtime.data.pagination.max_page_size})</p>
               <p className="rounded-md px-2 py-1.5 transition-colors hover:bg-secondary/50"><span className="font-mono">batch_max_operations:</span> {runtime.data.app.batch_max_operations}</p>
+              <p className="rounded-md px-2 py-1.5 transition-colors hover:bg-secondary/50"><span className="font-mono">transfer.max_archive:</span> {formatBytes(runtime.data.transfer.max_archive_bytes)} · media por defecto {runtime.data.transfer.include_media_default ? 'sí' : 'no'}</p>
               <p className="rounded-md px-2 py-1.5 transition-colors hover:bg-secondary/50"><span className="font-mono">audio_qa.earshot:</span> {runtime.data.audio_qa.enabled ? 'activado' : 'desactivado'}</p>
               <p className="rounded-md px-2 py-1.5 transition-colors hover:bg-secondary/50"><span className="font-mono">proveedores video:</span> {runtime.data.providers.video.join(', ')}</p>
               <p className="rounded-md px-2 py-1.5 transition-colors hover:bg-secondary/50"><span className="font-mono">proveedores tts:</span> {runtime.data.providers.tts.join(', ')}</p>

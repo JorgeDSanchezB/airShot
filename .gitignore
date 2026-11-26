@@ -37,6 +37,7 @@ yarn-error.log*
 # datos locales de la app (SQLite + medios generados)
 /db/
 /data/
+/.test-data/
 dev.log
 server.log
 tool-results/
