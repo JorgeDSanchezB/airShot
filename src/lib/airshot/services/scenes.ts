@@ -3,7 +3,8 @@
 // - assets: POST generate/upload SUSTITUYE el asset previo (huérfano borrado vía storage)
 // - *_pending en curso → 409 STATE_CONFLICT en deletes/overwrites
 // - lastError se conserva hasta el próximo éxito del mismo paso
-// - recovery: video_pending sin job activo tras reinicio → failed + snapshot timeout
+// - recovery: cualquier *_pending sin operación activa y stale → failed + snapshot timeout
+//   (cubre video_pending asíncrono y image/audio_pending síncronos que murieron con el proceso)
 
 import { randomUUID } from 'node:crypto'
 import { db } from '@/lib/db'
@@ -37,6 +38,42 @@ export async function getSceneOr404(id: string): Promise<Scene> {
   return row
 }
 
+// Operaciones síncronas en vuelo EN ESTE PROCESO (imagen/audio). Sin esto, un
+// proveedor lento (> pending_stale_ms) podría marcarse como huérfano por otra
+// petición concurrente. La recuperación entre procesos queda fuera del alcance
+// single-process declarado (ver README).
+const activeSyncOps = new Set<string>()
+
+function isSceneOperationActive(id: string): boolean {
+  return isSceneJobActive(id) || activeSyncOps.has(id)
+}
+
+/**
+ * Recuperación honesta de estados *_pending huérfanos (B1 generalizado).
+ * Un *_pending sin operación activa en este proceso y con updatedAt fuera de
+ * app.pending_stale_ms corresponde a una petición/proceso muerto → failed
+ * reintentable (PROVIDER_TIMEOUT). Devuelve la fila efectiva a usar.
+ */
+async function recoverStalePending(id: string): Promise<Scene> {
+  const row = await getSceneOr404(id)
+  if (!row.status.endsWith('_pending')) return row
+  if (isSceneOperationActive(id)) return row
+  if (Date.now() - row.updatedAt.getTime() <= PENDING_STALE_MS) return row
+  const problem = new AppError(
+    'PROVIDER_TIMEOUT',
+    `operación ${row.status} perdida (p. ej. reinicio del servidor durante la llamada al proveedor); la escena queda marcada failed-reintentable`,
+    { sceneId: id },
+  )
+  return db.scene.update({ where: { id }, data: { status: 'failed', lastError: problemToColumn(problem.problem) } })
+}
+
+/** Tras recoverStalePending, un *_pending restante implica operación activa. */
+function assertNoPending(scene: Scene): void {
+  if (scene.status.endsWith('_pending')) {
+    throw new AppError('STATE_CONFLICT', `hay una operación ${scene.status} en curso`, { sceneId: scene.id })
+  }
+}
+
 export async function referenceDtos(sceneId: string): Promise<Array<{ referenceId: string; kind: 'subject' | 'environment' }>> {
   const rows = await db.sceneReference.findMany({ where: { sceneId } })
   return rows.map((r: SceneReference) => ({ referenceId: r.referenceId, kind: r.kind as 'subject' | 'environment' }))
@@ -47,12 +84,7 @@ function problemToColumn(problem: Problem): string {
 }
 
 export async function getScene(id: string): Promise<SceneResponseDto> {
-  let row = await getSceneOr404(id)
-  // recuperación honesta: *_pending sin job activo (p. ej. reinicio del servidor)
-  if (row.status === 'video_pending' && !isSceneJobActive(id) && Date.now() - row.updatedAt.getTime() > PENDING_STALE_MS) {
-    const problem = new AppError('PROVIDER_TIMEOUT', 'job de vídeo perdido (p. ej. reinicio del servidor); la escena queda marcada failed-reintentable', { sceneId: id })
-    row = await db.scene.update({ where: { id }, data: { status: 'failed', lastError: problemToColumn(problem.problem) } })
-  }
+  const row = await recoverStalePending(id)
   return toSceneResponse(row, await referenceDtos(id))
 }
 
@@ -84,12 +116,8 @@ export async function patchScene(id: string, body: z.infer<typeof PatchSceneRequ
 }
 
 export async function deleteScene(id: string): Promise<void> {
-  const row = await getSceneOr404(id)
-  if (row.status.endsWith('_pending')) {
-    if (row.status !== 'video_pending' || isSceneJobActive(id)) {
-      throw new AppError('STATE_CONFLICT', `hay una operación ${row.status} en curso`, { sceneId: id })
-    }
-  }
+  const row = await recoverStalePending(id)
+  assertNoPending(row)
   storage.delete(row.imageBasePath)
   storage.delete(row.videoClipPath)
   storage.delete(row.audioPath)
@@ -250,14 +278,8 @@ async function persistSceneFailure(id: string, err: unknown): Promise<void> {
 // ---------------------------------------------------------------- imagen base (síncrono)
 
 export async function generateSceneImage(id: string, body: z.infer<typeof GenerateSceneImageRequest>): Promise<SceneResponseDto> {
-  const scene = await getSceneOr404(id)
-  if (scene.status.endsWith('_pending')) {
-    // m2 (ronda de corrección): el 409 cubre cualquier *_pending en curso
-    // (video_pending activo, o image/audio_pending de la propia petición síncrona en vuelo)
-    if (scene.status !== 'video_pending' || isSceneJobActive(id)) {
-      throw new AppError('STATE_CONFLICT', `hay una operación ${scene.status} en curso`, { sceneId: id })
-    }
-  }
+  const scene = await recoverStalePending(id)
+  assertNoPending(scene)
   const project = await getProjectOr404(scene.projectId)
   const styleFragment = await styleFragmentFor(project, body.styleId)
   const loadedRefs = await referencesForScene(id)
@@ -266,6 +288,7 @@ export async function generateSceneImage(id: string, body: z.infer<typeof Genera
     styleFragmentEn: styleFragment,
     references: toComposerRefs(loadedRefs),
   })
+  activeSyncOps.add(id)
   await db.scene.update({ where: { id }, data: { status: 'image_pending' } })
   try {
     const { provider, name } = await getImageProvider(body.providerOverride)
@@ -285,18 +308,14 @@ export async function generateSceneImage(id: string, body: z.infer<typeof Genera
   } catch (err) {
     await persistSceneFailure(id, err)
     throw err
+  } finally {
+    activeSyncOps.delete(id)
   }
 }
 
 export async function uploadSceneImage(id: string, file: { buffer: Buffer; ext: string }): Promise<SceneResponseDto> {
-  const scene = await getSceneOr404(id)
-  if (scene.status.endsWith('_pending')) {
-    // m2 (ronda de corrección): el 409 cubre cualquier *_pending en curso
-    // (video_pending activo, o image/audio_pending de la propia petición síncrona en vuelo)
-    if (scene.status !== 'video_pending' || isSceneJobActive(id)) {
-      throw new AppError('STATE_CONFLICT', `hay una operación ${scene.status} en curso`, { sceneId: id })
-    }
-  }
+  const scene = await recoverStalePending(id)
+  assertNoPending(scene)
   const previousImage = scene.imageBasePath
   const key = storage.sceneAsset('image', scene.projectId, id, 'upload', file.ext)
   storage.save(key, file.buffer)
@@ -307,14 +326,8 @@ export async function uploadSceneImage(id: string, file: { buffer: Buffer; ext: 
 }
 
 export async function deleteSceneAsset(id: string, kind: 'image' | 'video' | 'audio'): Promise<void> {
-  const scene = await getSceneOr404(id)
-  if (scene.status.endsWith('_pending')) {
-    // m2 (ronda de corrección): el 409 cubre cualquier *_pending en curso
-    // (video_pending activo, o image/audio_pending de la propia petición síncrona en vuelo)
-    if (scene.status !== 'video_pending' || isSceneJobActive(id)) {
-      throw new AppError('STATE_CONFLICT', `hay una operación ${scene.status} en curso`, { sceneId: id })
-    }
-  }
+  const scene = await recoverStalePending(id)
+  assertNoPending(scene)
   const field = kind === 'image' ? 'imageBasePath' : kind === 'video' ? 'videoClipPath' : 'audioPath'
   const current = (scene as unknown as Record<string, string | null>)[field] ?? null
   if (current !== null) {
@@ -329,7 +342,7 @@ export async function deleteSceneAsset(id: string, kind: 'image' | 'video' | 'au
 // ---------------------------------------------------------------- vídeo (asíncrono, 202)
 
 export async function generateSceneVideo(id: string, body: z.infer<typeof GenerateSceneVideoRequest>): Promise<SceneResponseDto> {
-  const scene = await getSceneOr404(id)
+  const scene = await recoverStalePending(id)
   const project = await getProjectOr404(scene.projectId)
   if (scene.imageBasePath === null) {
     throw new AppError('STATE_CONFLICT', 'image-to-video requiere imagen base (imageBasePath null)', {
@@ -337,9 +350,7 @@ export async function generateSceneVideo(id: string, body: z.infer<typeof Genera
       hints: ['Genera (POST /scenes/{id}/generate-image) o sube (POST /scenes/{id}/image) la imagen base primero.'],
     })
   }
-  if (scene.status === 'video_pending') {
-    throw new AppError('STATE_CONFLICT', 'ya hay una operación video_pending en curso', { sceneId: id })
-  }
+  assertNoPending(scene)
   const { provider, name } = await getVideoProvider(body.providerOverride, project.videoProvider)
   const caps = provider.capabilities()
   const requested = body.durationSeconds ?? scene.durationSeconds
@@ -394,17 +405,12 @@ export function narrationTextFor(scene: Scene): string {
 }
 
 export async function generateSceneAudio(id: string, body: z.infer<typeof GenerateSceneAudioRequest>): Promise<SceneResponseDto> {
-  const scene = await getSceneOr404(id)
-  if (scene.status.endsWith('_pending')) {
-    // m2 (ronda de corrección): el 409 cubre cualquier *_pending en curso
-    // (video_pending activo, o image/audio_pending de la propia petición síncrona en vuelo)
-    if (scene.status !== 'video_pending' || isSceneJobActive(id)) {
-      throw new AppError('STATE_CONFLICT', `hay una operación ${scene.status} en curso`, { sceneId: id })
-    }
-  }
+  const scene = await recoverStalePending(id)
+  assertNoPending(scene)
   const project = await getProjectOr404(scene.projectId)
   const text = narrationTextFor(scene)
   const voiceId = body.voiceId !== undefined ? body.voiceId : (scene.voiceId ?? project.voiceId)
+  activeSyncOps.add(id)
   await db.scene.update({ where: { id }, data: { status: 'audio_pending' } })
   try {
     const { provider, name } = await getTTSProvider(body.providerOverride, project.ttsProvider)
@@ -423,5 +429,7 @@ export async function generateSceneAudio(id: string, body: z.infer<typeof Genera
   } catch (err) {
     await persistSceneFailure(id, err)
     throw err
+  } finally {
+    activeSyncOps.delete(id)
   }
 }

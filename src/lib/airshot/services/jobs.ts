@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto'
 import { db } from '@/lib/db'
 import { airshotConfig } from '@/lib/airshot/config/loader'
 import { AppError, type Problem } from '@/lib/airshot/core/errors'
+import { logger } from '@/lib/airshot/core/logger'
 import { storage } from '@/lib/airshot/infrastructure/storage'
 import { assembleProject } from '@/lib/airshot/infrastructure/assembly'
 import { getAudioQAProvider, getVideoProvider, withProviderConcurrency } from '@/lib/airshot/infrastructure/providers/factory'
@@ -63,6 +64,7 @@ export async function sweepOrphanJobs(opts: { staleOnly: boolean }): Promise<num
     if (row.jobType === 'assembly') {
       await db.project.updateMany({ where: { id: row.projectId, status: 'assembling' }, data: { status: 'failed' } })
     }
+    logger.warn('job.orphan_swept', { jobId: row.id, jobType: row.jobType, projectId: row.projectId, status: row.status })
     swept++
   }
   return swept
@@ -82,9 +84,10 @@ export type SceneVideoJob = {
 
 export function startSceneVideoJob(job: SceneVideoJob): void {
   activeSceneJobs.add(job.sceneId)
+  logger.info('job.scene_video.started', { sceneId: job.sceneId, provider: job.providerName, durationSeconds: job.durationSeconds })
   void runSceneVideoJob(job)
     .catch((err) => {
-      console.error(`[airshot] job vídeo de escena ${job.sceneId} no controlado:`, err)
+      logger.error('job.scene_video.unhandled', { sceneId: job.sceneId, error: err })
     })
     .finally(() => {
       activeSceneJobs.delete(job.sceneId)
@@ -92,6 +95,7 @@ export function startSceneVideoJob(job: SceneVideoJob): void {
 }
 
 async function runSceneVideoJob(job: SceneVideoJob): Promise<void> {
+  const startedAt = Date.now()
   try {
     const { provider } = await getVideoProvider(job.providerName, null)
     const request: VideoGenerationRequest = {
@@ -125,11 +129,18 @@ async function runSceneVideoJob(job: SceneVideoJob): Promise<void> {
       storage.delete(previousClip)
     }
     await db.project.updateMany({ where: { id: scene.projectId, status: 'storyboard_ready' }, data: { status: 'in_production' } })
+    logger.info('job.scene_video.completed', {
+      sceneId: job.sceneId,
+      provider: job.providerName,
+      ms: Date.now() - startedAt,
+      effectiveSeconds: result.effectiveDurationSeconds,
+    })
   } catch (err) {
     const problem = errorSnapshot(err)
+    logger.error('job.scene_video.failed', { sceneId: job.sceneId, provider: job.providerName, code: problem.code, detail: problem.detail, ms: Date.now() - startedAt })
     await db.scene
       .update({ where: { id: job.sceneId }, data: { status: 'failed', lastError: problemToColumn(problem) } })
-      .catch((dbErr: unknown) => console.error('[airshot] no se pudo marcar la escena como failed:', dbErr))
+      .catch((dbErr: unknown) => logger.error('job.scene_video.persist_failed', { sceneId: job.sceneId, error: dbErr }))
   }
 }
 
@@ -143,10 +154,6 @@ export async function createAssemblyJob(
   await sweepOrphanJobs({ staleOnly: true })
   const project = await db.project.findUnique({ where: { id: projectId } })
   if (project === null) throw new AppError('NOT_FOUND', `proyecto ${projectId} no encontrado`, { projectId })
-  const running = await db.assemblyJob.count({ where: { projectId, jobType: 'assembly', status: { in: ['pending', 'running'] } } })
-  if (running > 0) {
-    throw new AppError('STATE_CONFLICT', 'ya hay un job de ensamblaje en curso para el proyecto', { projectId })
-  }
   const scenes = await db.scene.findMany({ where: { projectId }, orderBy: { orderIndex: 'asc' } })
   const incomplete = scenes.filter(
     (s) => s.videoClipPath === null || (params.includeAudio && airshotConfig.assembly.require_audio && s.audioPath === null),
@@ -162,44 +169,55 @@ export async function createAssemblyJob(
   }
 
   const jobId = randomUUID()
-  await db.assemblyJob.create({
-    data: {
-      id: jobId,
-      projectId,
-      jobType: 'assembly',
-      status: 'pending',
-      params: JSON.stringify({
-        includeAudio: params.includeAudio,
-        musicAssetKey: project.musicAssetKey,
-        musicVolume: params.musicVolume,
-        musicOriginalName: project.musicOriginalName,
-        resolution: project.outputResolution,
-        fps: airshotConfig.assembly.output_fps,
-        codec: airshotConfig.assembly.video_codec,
-        sceneIds: scenes.map((s) => s.id),
-      }),
-    },
+  // count+create+transición en UNA transacción: dos peticiones simultáneas no
+  // pueden crear dos jobs activos (la carrera anterior era count-then-create).
+  await db.$transaction(async (tx) => {
+    const running = await tx.assemblyJob.count({ where: { projectId, jobType: 'assembly', status: { in: ['pending', 'running'] } } })
+    if (running > 0) {
+      throw new AppError('STATE_CONFLICT', 'ya hay un job de ensamblaje en curso para el proyecto', { projectId })
+    }
+    await tx.assemblyJob.create({
+      data: {
+        id: jobId,
+        projectId,
+        jobType: 'assembly',
+        status: 'pending',
+        params: JSON.stringify({
+          includeAudio: params.includeAudio,
+          musicAssetKey: project.musicAssetKey,
+          musicVolume: params.musicVolume,
+          musicOriginalName: project.musicOriginalName,
+          resolution: project.outputResolution,
+          fps: airshotConfig.assembly.output_fps,
+          codec: airshotConfig.assembly.video_codec,
+          sceneIds: scenes.map((s) => s.id),
+        }),
+      },
+    })
+    await tx.project.update({ where: { id: projectId }, data: { status: 'assembling' } })
   })
-  await db.project.update({ where: { id: projectId }, data: { status: 'assembling' } })
 
   startAssemblyJobRunner(jobId)
+  logger.info('job.assembly.created', { jobId, projectId, scenes: scenes.length, includeAudio: params.includeAudio })
   return jobId
 }
 
 function startAssemblyJobRunner(jobId: string): void {
   activeAssemblyJobs.add(jobId)
   void runAssemblyJob(jobId)
-    .catch((err) => console.error(`[airshot] job ensamblaje ${jobId} no controlado:`, err))
+    .catch((err) => logger.error('job.assembly.unhandled', { jobId, error: err }))
     .finally(() => activeAssemblyJobs.delete(jobId))
 }
 
 async function runAssemblyJob(jobId: string): Promise<void> {
+  const startedAt = Date.now()
   const job = await db.assemblyJob.findUnique({ where: { id: jobId } })
   if (job === null) return
   await db.assemblyJob.update({ where: { id: jobId }, data: { status: 'running', startedAt: new Date() } })
   const project = await db.project.findUnique({ where: { id: job.projectId } })
   const scenes = await db.scene.findMany({ where: { projectId: job.projectId }, orderBy: { orderIndex: 'asc' } })
   if (project === null || scenes.length === 0) {
+    logger.error('job.assembly.failed', { jobId, projectId: job.projectId, code: 'NOT_FOUND', detail: 'proyecto/escenas desaparecidos durante el job' })
     await db.assemblyJob.update({
       where: { id: jobId },
       data: { status: 'failed', errorMessage: problemToColumn(new AppError('NOT_FOUND', 'proyecto/escenas desaparecidos durante el job').problem), finishedAt: new Date() },
@@ -224,12 +242,14 @@ async function runAssemblyJob(jobId: string): Promise<void> {
       data: { status: 'completed', outputPath: outcome.outputPath, finishedAt: new Date() },
     })
     await db.project.update({ where: { id: job.projectId }, data: { status: 'assembled' } })
+    logger.info('job.assembly.completed', { jobId, projectId: job.projectId, ms: Date.now() - startedAt, outputPath: outcome.outputPath })
   } else {
     await db.assemblyJob.update({
       where: { id: jobId },
       data: { status: 'failed', errorMessage: problemToColumn(outcome.problem), finishedAt: new Date() },
     })
     await db.project.update({ where: { id: job.projectId }, data: { status: 'failed' } })
+    logger.error('job.assembly.failed', { jobId, projectId: job.projectId, code: outcome.problem.code, detail: outcome.problem.detail, ms: Date.now() - startedAt })
   }
 }
 
@@ -250,32 +270,36 @@ export async function createAudioQAJob(
   }
   const project = await db.project.findUnique({ where: { id: projectId } })
   if (project === null) throw new AppError('NOT_FOUND', `proyecto ${projectId} no encontrado`, { projectId })
-  const running = await db.assemblyJob.count({ where: { projectId, jobType: 'audio_qa', status: { in: ['pending', 'running'] } } })
-  if (running > 0) {
-    throw new AppError('STATE_CONFLICT', 'ya hay un job de audio-qa en curso para el proyecto', { projectId })
-  }
   const jobId = randomUUID()
-  await db.assemblyJob.create({
-    data: {
-      id: jobId,
-      projectId,
-      jobType: 'audio_qa',
-      status: 'pending',
-      params: JSON.stringify({ features, generateSfx }),
-    },
+  await db.$transaction(async (tx) => {
+    const running = await tx.assemblyJob.count({ where: { projectId, jobType: 'audio_qa', status: { in: ['pending', 'running'] } } })
+    if (running > 0) {
+      throw new AppError('STATE_CONFLICT', 'ya hay un job de audio-qa en curso para el proyecto', { projectId })
+    }
+    await tx.assemblyJob.create({
+      data: {
+        id: jobId,
+        projectId,
+        jobType: 'audio_qa',
+        status: 'pending',
+        params: JSON.stringify({ features, generateSfx }),
+      },
+    })
   })
   startAudioQAJobRunner(jobId, features, generateSfx)
+  logger.info('job.audio_qa.created', { jobId, projectId, features })
   return jobId
 }
 
 function startAudioQAJobRunner(jobId: string, features: Array<'naturalness' | 'sync' | 'loudness' | 'artifacts'>, generateSfx: boolean): void {
   activeAssemblyJobs.add(jobId)
   void runAudioQAJob(jobId, features, generateSfx)
-    .catch((err) => console.error(`[airshot] job audio-qa ${jobId} no controlado:`, err))
+    .catch((err) => logger.error('job.audio_qa.unhandled', { jobId, error: err }))
     .finally(() => activeAssemblyJobs.delete(jobId))
 }
 
 async function runAudioQAJob(jobId: string, features: Array<'naturalness' | 'sync' | 'loudness' | 'artifacts'>, generateSfx: boolean): Promise<void> {
+  const startedAt = Date.now()
   const job = await db.assemblyJob.findUnique({ where: { id: jobId } })
   if (job === null) return
   await db.assemblyJob.update({ where: { id: jobId }, data: { status: 'running', startedAt: new Date() } })
@@ -302,10 +326,13 @@ async function runAudioQAJob(jobId: string, features: Array<'naturalness' | 'syn
       where: { id: jobId },
       data: { status: 'completed', outputPath: reportKey, report: JSON.stringify(report), finishedAt: new Date() },
     })
+    logger.info('job.audio_qa.completed', { jobId, projectId: job.projectId, ms: Date.now() - startedAt })
   } catch (err) {
+    const problem = errorSnapshot(err)
+    logger.error('job.audio_qa.failed', { jobId, projectId: job.projectId, code: problem.code, detail: problem.detail, ms: Date.now() - startedAt })
     await db.assemblyJob.update({
       where: { id: jobId },
-      data: { status: 'failed', errorMessage: problemToColumn(errorSnapshot(err)), finishedAt: new Date() },
+      data: { status: 'failed', errorMessage: problemToColumn(problem), finishedAt: new Date() },
     })
   }
 }

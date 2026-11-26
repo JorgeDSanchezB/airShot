@@ -99,6 +99,12 @@ export const AppConfigSchema = z.object({
   }),
   security: z.object({
     api_key_mask_visible_chars: z.number().int().min(0),
+    rate_limit: z.object({
+      enabled: z.boolean(),
+      window_seconds: z.number().int().positive(),
+      max_requests: z.number().int().positive(),
+      max_sensitive_requests: z.number().int().positive(),
+    }),
   }),
   audio_qa: z.object({
     earshot: z.object({

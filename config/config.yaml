@@ -85,6 +85,11 @@ media:
 
 security:
   api_key_mask_visible_chars: 4        # INV-14
+  rate_limit:                          # 429 RATE_LIMITED (in-memory, por IP; single-process)
+    enabled: true
+    window_seconds: 60
+    max_requests: 120                  # lecturas/mutaciones ordinarias por ventana
+    max_sensitive_requests: 30         # generate-*/assemble/storyboard/uploads por ventana
 
 audio_qa:
   earshot:

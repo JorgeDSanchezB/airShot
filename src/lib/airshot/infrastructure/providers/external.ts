@@ -102,12 +102,21 @@ async function httpJson<T>(args: HttpArgs): Promise<T> {
   throw new AppError('INTERNAL_ERROR', `httpJson: camino inalcanzable (${args.provider})`)
 }
 
-/** Descarga binaria (asset final) con clasificación de errores. */
+/** Descarga/llamada binaria con clasificación de errores (respeta método y body JSON). */
 async function httpBinary(args: HttpArgs): Promise<Buffer> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), args.entry.timeout_seconds * 1000)
   try {
-    const res = await fetch(args.url, { method: 'GET', headers: args.headers, signal: controller.signal })
+    const res = await fetch(args.url, {
+      method: args.method ?? 'GET',
+      headers: {
+        accept: 'application/octet-stream',
+        ...(args.body !== undefined ? { 'content-type': 'application/json' } : {}),
+        ...args.headers,
+      },
+      body: args.body !== undefined ? JSON.stringify(args.body) : undefined,
+      signal: controller.signal,
+    })
     if (res.status === 401 || res.status === 403) {
       throw new ProviderAuthError(`${args.provider}: HTTP ${res.status}`, args.provider).toAppError()
     }
@@ -149,8 +158,9 @@ const WIRES: Record<string, VideoWire> = {
     // M1 (ronda de corrección): consume referenceImageAbsPaths hasta reference_image_limit;
     // Veo admite hasta 3 imágenes (R-03): la base + referencias como parámetro adicional
     // (supuesto A-02: forma contra la API pública, a verificar con credenciales reales)
-    submit: ({ baseUrl, key, req, prompt, referenceImages }) => ({
-      url: `${baseUrl}/models/veo-3.0-preview:predictLongRunning?key=${key}`,
+    // La API key va en header x-goog-api-key (nunca en query string: no debe acabar en logs).
+    submit: ({ baseUrl, req, prompt, referenceImages }) => ({
+      url: `${baseUrl}/models/veo-3.0-preview:predictLongRunning`,
       body: {
         instances: [{
           prompt,
@@ -166,7 +176,7 @@ const WIRES: Record<string, VideoWire> = {
         },
       },
     }),
-    pollPath: ({ baseUrl, key, opId }) => `${baseUrl}/operations/${opId}?key=${key}`,
+    pollPath: ({ baseUrl, opId }) => `${baseUrl}/operations/${opId}`,
     extractOpId: (b) => String((b as { name?: string }).name ?? '').split('/').pop() ?? '',
     extractAssetUrl: (b) => {
       const r = b as { response?: { generateVideoResponse?: { generatedSamples?: Array<{ video?: { uri?: string } }> } } }
@@ -242,7 +252,7 @@ export class ExternalVideoProvider implements VideoProvider {
     const headers: Record<string, string> = this.name === 'runway'
       ? { authorization: `Bearer ${this.apiKey}`, 'x-runway-version': '2024-11-05' }
       : this.name === 'veo'
-        ? {}
+        ? { 'x-goog-api-key': this.apiKey }
         : { authorization: `Bearer ${this.apiKey}` }
     // M1: referencias consumidas hasta el reference_image_limit del proveedor
     // (la imagen base ocupa 1 slot; kling/runway/luma con limit=1 solo reciben la base)

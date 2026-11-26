@@ -4,6 +4,7 @@
 // aplican en el caso «ausente» y siempre documentados.
 
 import { NextResponse } from 'next/server'
+import { logger } from '@/lib/airshot/core/logger'
 
 export type ErrorCode =
   // Datos (422)
@@ -31,6 +32,9 @@ export type ErrorCode =
   // Payload / medio (413 / 415)
   | 'PAYLOAD_TOO_LARGE'
   | 'UNSUPPORTED_MEDIA'
+  // Acceso (401 / 429)
+  | 'AUTH_REQUIRED'
+  | 'RATE_LIMITED'
   // Crítico (500)
   | 'INTERNAL_ERROR'
 
@@ -55,6 +59,8 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   PROVIDER_TIMEOUT: 504,
   PAYLOAD_TOO_LARGE: 413,
   UNSUPPORTED_MEDIA: 415,
+  AUTH_REQUIRED: 401,
+  RATE_LIMITED: 429,
   INTERNAL_ERROR: 500,
 }
 
@@ -62,6 +68,7 @@ const RETRYABLE_CODES: ReadonlySet<ErrorCode> = new Set<ErrorCode>([
   'PROVIDER_TIMEOUT',
   'PROVIDER_UNAVAILABLE',
   'PROVIDER_RATE_LIMIT',
+  'RATE_LIMITED',
 ])
 
 const TITLE_BY_CODE: Record<ErrorCode, string> = {
@@ -85,6 +92,8 @@ const TITLE_BY_CODE: Record<ErrorCode, string> = {
   PROVIDER_TIMEOUT: 'Provider timeout',
   PAYLOAD_TOO_LARGE: 'Payload too large',
   UNSUPPORTED_MEDIA: 'Unsupported media type',
+  AUTH_REQUIRED: 'Authentication required',
+  RATE_LIMITED: 'Rate limit exceeded',
   INTERNAL_ERROR: 'Internal error',
 }
 
@@ -176,7 +185,13 @@ export function problemResponse(err: unknown, traceId: string, instance: string)
     problem.instance = instance
   }
   // Log de servidor: nunca API keys (se enmascaran antes de llegar aquí)
-  console.error(`[airshot] traceId=${traceId} code=${problem.code} status=${problem.status} :: ${problem.detail}`)
+  logger[problem.status >= 500 ? 'error' : 'warn']('http.problem', {
+    traceId,
+    code: problem.code,
+    status: problem.status,
+    instance,
+    detail: problem.detail,
+  })
   return NextResponse.json(problem, {
     status: problem.status,
     headers: { 'content-type': 'application/problem+json; charset=utf-8' },

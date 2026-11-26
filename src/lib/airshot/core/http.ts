@@ -12,6 +12,8 @@ import { randomUUID } from 'node:crypto'
 import { airshotConfig } from '@/lib/airshot/config/loader'
 import { AppError, problemResponse } from '@/lib/airshot/core/errors'
 import { parseJsonStrict } from '@/lib/airshot/core/json'
+import { enforceRateLimit } from '@/lib/airshot/core/rate-limit'
+import { logger } from '@/lib/airshot/core/logger'
 
 export type LocalUser = { id: string }
 
@@ -30,10 +32,20 @@ export function withRoute<Ctx>(
 ): (req: NextRequest, seg: Ctx) => Promise<Response> {
   return async (req: NextRequest, seg: Ctx): Promise<Response> => {
     const traceId = randomUUID()
-    getCurrentUser() // hook de auth (§3.1.2): presente en todas las rutas
+    const user = getCurrentUser() // hook de auth (§3.1.2): presente en todas las rutas
     const instance = new URL(req.url).pathname
+    const startedAt = Date.now()
     try {
-      const res = await handler(req, { traceId, user: getCurrentUser(), ...seg })
+      enforceRateLimit(req.headers, req.method)
+      const res = await handler(req, { traceId, user, ...seg })
+      res.headers.set('x-trace-id', traceId)
+      logger.debug('http.request', {
+        traceId,
+        method: req.method,
+        path: instance,
+        status: res.status,
+        ms: Date.now() - startedAt,
+      })
       return res as Response
     } catch (err) {
       return problemResponse(err, traceId, instance)

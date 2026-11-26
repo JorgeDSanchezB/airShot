@@ -3,7 +3,7 @@
 // AirShot — atoms: StatusChip, ErrorNotice (por code, con hints accionables),
 // DurationSlider (límites de runtime-config, nunca constantes propias), Labeled.
 
-import { AlertTriangle, Clapperboard, RotateCw } from 'lucide-react'
+import { AlertTriangle, Clapperboard, KeyRound, RotateCw } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
@@ -80,6 +80,13 @@ export function ErrorNotice({
       </AlertTitle>
       <AlertDescription className="text-xs">
         {problem.detail}
+        {problem.code === 'AUTH_REQUIRED' && (
+          <Button asChild size="sm" variant="outline" className="ml-2 h-6 gap-1 py-0 text-xs">
+            <a href="/unlock">
+              <KeyRound className="size-3" /> Desbloquear
+            </a>
+          </Button>
+        )}
         {onRetry !== undefined && (
           <Button size="sm" variant="outline" className="ml-2 h-6 gap-1 py-0 text-xs" onClick={onRetry}>
             <RotateCw className="size-3" /> Reintentar

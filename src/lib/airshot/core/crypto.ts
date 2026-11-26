@@ -7,6 +7,7 @@
 
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'node:crypto'
 import { airshotConfig } from '@/lib/airshot/config/loader'
+import { logger } from '@/lib/airshot/core/logger'
 
 const ALGO = 'aes-256-gcm'
 const IV_LEN = 12
@@ -20,9 +21,14 @@ function getKey(): Buffer {
     // aceptamos también frases: derivamos
     return scryptSync(env, 'airshot-secret-key-v1', 32)
   }
+  if (process.env.NODE_ENV === 'production') {
+    // Fail-fast: una clave fija haría descifrables las API keys por cualquiera
+    // con acceso al código; en producción el env es obligatorio.
+    throw new Error('AIRSHOT_SECRET_KEY no definida: es obligatoria en producción (base64 de 32 bytes o frase)')
+  }
   if (!warned) {
     warned = true
-    console.warn('[airshot] AIRSHOT_SECRET_KEY no definida: usando clave local derivada (ok para single-user; define el env para portabilidad)')
+    logger.warn('crypto.fallback_key', { detail: 'AIRSHOT_SECRET_KEY no definida: usando clave local derivada (define el env para portabilidad)' })
   }
   return scryptSync('airshot-local-default', 'airshot-local-salt-v1', 32)
 }

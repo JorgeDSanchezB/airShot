@@ -3,11 +3,12 @@
 // normaliza y se comprueba que resuelve DENTRO del root (las claves las genera
 // el servidor; nunca se aceptan rutas del cliente). resolveUrl → /api/v1/media/<key>.
 
-import { mkdirSync, readFileSync, writeFileSync, unlinkSync, existsSync, statSync } from 'node:fs'
-import { dirname, join, resolve, sep } from 'node:path'
+import { mkdirSync, readFileSync, writeFileSync, unlinkSync, statSync, createReadStream, type Stats, type ReadStream } from 'node:fs'
+import { dirname, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { airshotConfig } from '@/lib/airshot/config/loader'
 import { AppError } from '@/lib/airshot/core/errors'
+import { logger } from '@/lib/airshot/core/logger'
 
 export type AssetKind = 'image' | 'video' | 'audio' | 'music' | 'report'
 
@@ -40,6 +41,15 @@ export class StorageService {
     return readFileSync(this.abs(key))
   }
 
+  stat(key: string): Stats {
+    return statSync(this.abs(key))
+  }
+
+  /** Stream por rangos para la entrega de medios (sin cargar el archivo entero). */
+  createReadStream(key: string, opts: { start?: number; end?: number } = {}): ReadStream {
+    return createReadStream(this.abs(key), opts)
+  }
+
   exists(key: string | null | undefined): boolean {
     if (key === null || key === undefined || key.length === 0) return false
     try {
@@ -55,7 +65,7 @@ export class StorageService {
       unlinkSync(this.abs(key))
     } catch {
       // huérfano ya borrado: se declara, no se oculta con catch vacío
-      console.warn(`[airshot] storage: delete de huérfano inexistente "${key}"`)
+      logger.warn('storage.delete_missing', { key })
     }
   }
 
@@ -69,7 +79,8 @@ export class StorageService {
   sceneAsset(kind: 'image' | 'video' | 'audio', projectId: string, sceneId: string, source: 'upload' | 'ai', ext: string): string {
     const dir = `${source === 'upload' ? 'uploads' : 'outputs'}/projects/${projectId}/scenes/${sceneId}`
     const prefix = kind === 'image' ? 'image' : kind === 'video' ? 'clip' : 'narration'
-    return join(dir, `${prefix}_${Date.now()}_${randomUUID().slice(0, 8)}.${ext}`)
+    // claves siempre POSIX (join() usaría '\' en Windows y abs() lo rechaza)
+    return `${dir}/${prefix}_${Date.now()}_${randomUUID().slice(0, 8)}.${ext}`
   }
 
   musicAsset(projectId: string, ext: string): string {
@@ -78,7 +89,7 @@ export class StorageService {
 
   referenceImage(referenceId: string, source: 'upload' | 'ai', ext: string): string {
     const dir = `${source === 'upload' ? 'uploads' : 'outputs'}/references/${referenceId}`
-    return join(dir, `image_${Date.now()}_${randomUUID().slice(0, 8)}.${ext}`)
+    return `${dir}/image_${Date.now()}_${randomUUID().slice(0, 8)}.${ext}`
   }
 
   assemblyOutput(projectId: string, jobId: string): string {

@@ -122,6 +122,25 @@ export async function healthDeep(): Promise<{ status: string; checks: Array<{ na
     ok: true,
     detail: needsKey.length === 0 ? 'todas las configs con key' : `sin key: ${needsKey.map((r) => `${r.providerName} [${r.providerType}]`).join(', ')}`,
   })
+  try {
+    const { statfs } = await import('node:fs/promises')
+    const space = await statfs(storage.root)
+    const freeBytes = Number(space.bavail) * Number(space.bsize)
+    const totalBytes = Number(space.blocks) * Number(space.bsize)
+    const gb = (n: number) => (n / 1024 ** 3).toFixed(2)
+    checks.push({ name: 'disk', ok: freeBytes > 0, detail: `libre ${gb(freeBytes)} GB de ${gb(totalBytes)} GB en data.root` })
+  } catch (err) {
+    checks.push({ name: 'disk', ok: false, detail: err instanceof Error ? err.message : String(err) })
+  }
+  try {
+    const [activeJobs, pendingScenes] = await Promise.all([
+      db.assemblyJob.count({ where: { status: { in: ['pending', 'running'] } } }),
+      db.scene.count({ where: { status: { endsWith: '_pending' } } }),
+    ])
+    checks.push({ name: 'jobs', ok: true, detail: `${activeJobs} job(s) activos, ${pendingScenes} escena(s) *_pending` })
+  } catch (err) {
+    checks.push({ name: 'jobs', ok: false, detail: err instanceof Error ? err.message : String(err) })
+  }
   return { status: 'ok', checks }
 }
 

@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { db } from '@/lib/db'
 import { airshotConfig, airshotStylesSeed } from '@/lib/airshot/config/loader'
+import { logger } from '@/lib/airshot/core/logger'
 
 declare global {
   var __airshotBootstrap: Promise<void> | undefined
@@ -38,7 +39,7 @@ async function bootstrap(): Promise<void> {
   const { sweepOrphanJobs } = await import('@/lib/airshot/services/jobs')
   const swept = await sweepOrphanJobs({ staleOnly: false })
   if (swept > 0) {
-    console.warn(`[airshot] arranque: ${swept} job(s) huérfano(s) marcado(s) failed (PROVIDER_TIMEOUT snapshot)`)
+    logger.warn('bootstrap.orphans_swept', { count: swept })
   }
 }
 
